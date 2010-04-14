@@ -1,0 +1,1817 @@
+<!-- $PostgreSQL: pgsql/doc/src/sgml/high-availability.sgml,v 1.49 2010/02/22 11:47:30 heikki Exp $ -->
+
+<chapter id="high-availability">
+ <title>High Availability, Load Balancing, and Replication</title>
+
+ <indexterm><primary>high availability</></>
+ <indexterm><primary>failover</></>
+ <indexterm><primary>replication</></>
+ <indexterm><primary>load balancing</></>
+ <indexterm><primary>clustering</></>
+ <indexterm><primary>data partitioning</></>
+
+ <para>
+  Database servers can work together to allow a second server to
+  take over quickly if the primary server fails (high
+  availability), or to allow several computers to serve the same
+  data (load balancing).  Ideally, database servers could work
+  together seamlessly.  Web servers serving static web pages can
+  be combined quite easily by merely load-balancing web requests
+  to multiple machines.  In fact, read-only database servers can
+  be combined relatively easily too.  Unfortunately, most database
+  servers have a read/write mix of requests, and read/write servers
+  are much harder to combine.  This is because though read-only
+  data needs to be placed on each server only once, a write to any
+  server has to be propagated to all servers so that future read
+  requests to those servers return consistent results.
+ </para>
+
+ <para>
+  This synchronization problem is the fundamental difficulty for
+  servers working together.  Because there is no single solution
+  that eliminates the impact of the sync problem for all use cases,
+  there are multiple solutions.  Each solution addresses this
+  problem in a different way, and minimizes its impact for a specific
+  workload.
+ </para>
+
+ <para>
+  Some solutions deal with synchronization by allowing only one
+  server to modify the data.  Servers that can modify data are
+  called read/write or "master" servers.  Servers that can reply
+  to read-only queries are called "slave" servers.  Servers that
+  cannot be accessed until they are changed to master servers are
+  called "standby" servers.
+ </para>
+
+ <para>
+  Some solutions are synchronous,
+  meaning that a data-modifying transaction is not considered
+  committed until all servers have committed the transaction.  This
+  guarantees that a failover will not lose any data and that all
+  load-balanced servers will return consistent results no matter
+  which server is queried. In contrast, asynchronous solutions allow some
+  delay between the time of a commit and its propagation to the other servers,
+  opening the possibility that some transactions might be lost in
+  the switch to a backup server, and that load balanced servers
+  might return slightly stale results.  Asynchronous communication
+  is used when synchronous would be too slow.
+ </para>
+
+ <para>
+  Solutions can also be categorized by their granularity.  Some solutions
+  can deal only with an entire database server, while others allow control
+  at the per-table or per-database level.
+ </para>
+
+ <para>
+  Performance must be considered in any choice.  There is usually a
+  trade-off between functionality and
+  performance.  For example, a fully synchronous solution over a slow
+  network might cut performance by more than half, while an asynchronous
+  one might have a minimal performance impact.
+ </para>
+
+ <para>
+  The remainder of this section outlines various failover, replication,
+  and load balancing solutions.  A <ulink
+  url="http://www.postgres-r.org/documentation/terms">glossary</ulink> is
+  also available.
+ </para>
+
+ <sect1 id="different-replication-solutions">
+ <title>Comparison of different solutions</title>
+
+ <variablelist>
+
+  <varlistentry>
+   <term>Shared Disk Failover</term>
+   <listitem>
+
+    <para>
+     Shared disk failover avoids synchronization overhead by having only one
+     copy of the database.  It uses a single disk array that is shared by
+     multiple servers.  If the main database server fails, the standby server
+     is able to mount and start the database as though it were recovering from
+     a database crash.  This allows rapid failover with no data loss.
+    </para>
+
+    <para>
+     Shared hardware functionality is common in network storage devices.
+     Using a network file system is also possible, though care must be
+     taken that the file system has full <acronym>POSIX</> behavior (see <xref
+     linkend="creating-cluster-nfs">).  One significant limitation of this
+     method is that if the shared disk array fails or becomes corrupt, the
+     primary and standby servers are both nonfunctional.  Another issue is
+     that the standby server should never access the shared storage while
+     the primary server is running.
+    </para>
+
+   </listitem>
+  </varlistentry>
+
+  <varlistentry>
+   <term>File System (Block-Device) Replication</term>
+   <listitem>
+
+    <para>
+     A modified version of shared hardware functionality is file system
+     replication, where all changes to a file system are mirrored to a file
+     system residing on another computer.  The only restriction is that
+     the mirroring must be done in a way that ensures the standby server
+     has a consistent copy of the file system &mdash; specifically, writes
+     to the standby must be done in the same order as those on the master.
+     <productname>DRBD</> is a popular file system replication solution
+     for Linux.
+    </para>
+
+<!--
+https://forge.continuent.org/pipermail/sequoia/2006-November/004070.html
+
+Oracle RAC is a shared disk approach and just send cache invalidations
+to other nodes but not actual data. As the disk is shared, data is
+only committed once to disk and there is a distributed locking
+protocol to make nodes agree on a serializable transactional order.
+-->
+
+   </listitem>
+  </varlistentry>
+
+  <varlistentry>
+   <term>Warm and Hot Standby Using Point-In-Time Recovery (<acronym>PITR</>)</term>
+   <listitem>
+
+    <para>
+     Warm and hot standby servers can be kept current by reading a
+     stream of write-ahead log (<acronym>WAL</>)
+     records.  If the main server fails, the warm standby contains
+     almost all of the data of the main server, and can be quickly
+     made the new master database server.  This is asynchronous and
+     can only be done for the entire database server.
+    </para>
+    <para>
+     A PITR standby server can be kept more up-to-date using streaming
+     replication.;  see <xref linkend="streaming-replication">.  For
+     warm standby information, see <xref linkend="warm-standby">, and
+     for hot standby, see <xref linkend="hot-standby">.
+    </para>
+   </listitem>
+  </varlistentry>
+
+  <varlistentry>
+   <term>Trigger-Based Master-Slave Replication</term>
+   <listitem>
+
+    <para>
+     A master-slave replication setup sends all data modification
+     queries to the master server.  The master server asynchronously
+     sends data changes to the slave server.  The slave can answer
+     read-only queries while the master server is running.  The
+     slave server is ideal for data warehouse queries.
+    </para>
+
+    <para>
+     <productname>Slony-I</> is an example of this type of replication, with per-table
+     granularity, and support for multiple slaves.  Because it
+     updates the slave server asynchronously (in batches), there is
+     possible data loss during fail over.
+    </para>
+   </listitem>
+  </varlistentry>
+
+  <varlistentry>
+   <term>Statement-Based Replication Middleware</term>
+   <listitem>
+
+    <para>
+     With statement-based replication middleware, a program intercepts
+     every SQL query and sends it to one or all servers.  Each server
+     operates independently.  Read-write queries are sent to all servers,
+     while read-only queries can be sent to just one server, allowing
+     the read workload to be distributed.
+    </para>
+
+    <para>
+     If queries are simply broadcast unmodified, functions like
+     <function>random()</>, <function>CURRENT_TIMESTAMP</>, and
+     sequences can have different values on different servers.
+     This is because each server operates independently, and because
+     SQL queries are broadcast (and not actual modified rows).  If
+     this is unacceptable, either the middleware or the application
+     must query such values from a single server and then use those
+     values in write queries.  Also, care must be taken that all
+     transactions either commit or abort on all servers, perhaps
+     using two-phase commit (<xref linkend="sql-prepare-transaction"
+     endterm="sql-prepare-transaction-title"> and <xref
+     linkend="sql-commit-prepared" endterm="sql-commit-prepared-title">.
+     <productname>Pgpool-II</> and <productname>Sequoia</> are examples of
+     this type of replication.
+    </para>
+   </listitem>
+  </varlistentry>
+
+  <varlistentry>
+   <term>Asynchronous Multimaster Replication</term>
+   <listitem>
+
+    <para>
+     For servers that are not regularly connected, like laptops or
+     remote servers, keeping data consistent among servers is a
+     challenge.  Using asynchronous multimaster replication, each
+     server works independently, and periodically communicates with
+     the other servers to identify conflicting transactions.  The
+     conflicts can be resolved by users or conflict resolution rules.
+     Bucardo is an example of this type of replication.
+    </para>
+   </listitem>
+  </varlistentry>
+
+  <varlistentry>
+   <term>Synchronous Multimaster Replication</term>
+   <listitem>
+
+    <para>
+     In synchronous multimaster replication, each server can accept
+     write requests, and modified data is transmitted from the
+     original server to every other server before each transaction
+     commits.  Heavy write activity can cause excessive locking,
+     leading to poor performance.  In fact, write performance is
+     often worse than that of a single server.  Read requests can
+     be sent to any server.  Some implementations use shared disk
+     to reduce the communication overhead.  Synchronous multimaster
+     replication is best for mostly read workloads, though its big
+     advantage is that any server can accept write requests &mdash;
+     there is no need to partition workloads between master and
+     slave servers, and because the data changes are sent from one
+     server to another, there is no problem with non-deterministic
+     functions like <function>random()</>.
+    </para>
+
+    <para>
+     <productname>PostgreSQL</> does not offer this type of replication,
+     though <productname>PostgreSQL</> two-phase commit (<xref
+     linkend="sql-prepare-transaction"
+     endterm="sql-prepare-transaction-title"> and <xref
+     linkend="sql-commit-prepared" endterm="sql-commit-prepared-title">)
+     can be used to implement this in application code or middleware.
+    </para>
+   </listitem>
+  </varlistentry>
+
+  <varlistentry>
+   <term>Commercial Solutions</term>
+   <listitem>
+
+    <para>
+     Because <productname>PostgreSQL</> is open source and easily
+     extended, a number of companies have taken <productname>PostgreSQL</>
+     and created commercial closed-source solutions with unique
+     failover, replication, and load balancing capabilities.
+    </para>
+   </listitem>
+  </varlistentry>
+
+ </variablelist>
+
+ <para>
+  <xref linkend="high-availability-matrix"> summarizes
+  the capabilities of the various solutions listed above.
+ </para>
+
+ <table id="high-availability-matrix">
+  <title>High Availability, Load Balancing, and Replication Feature Matrix</title>
+  <tgroup cols="8">
+   <thead>
+    <row>
+     <entry>Feature</entry>
+     <entry>Shared Disk Failover</entry>
+     <entry>File System Replication</entry>
+     <entry>Hot/Warm Standby Using PITR</entry>
+     <entry>Trigger-Based Master-Slave Replication</entry>
+     <entry>Statement-Based Replication Middleware</entry>
+     <entry>Asynchronous Multimaster Replication</entry>
+     <entry>Synchronous Multimaster Replication</entry>
+    </row>
+   </thead>
+
+   <tbody>
+
+    <row>
+     <entry>Most Common Implementation</entry>
+     <entry align="center">NAS</entry>
+     <entry align="center">DRBD</entry>
+     <entry align="center">PITR</entry>
+     <entry align="center">Slony</entry>
+     <entry align="center">pgpool-II</entry>
+     <entry align="center">Bucardo</entry>
+     <entry align="center"></entry>
+    </row>
+
+    <row>
+     <entry>Communication Method</entry>
+     <entry align="center">shared disk</entry>
+     <entry align="center">disk blocks</entry>
+     <entry align="center">WAL</entry>
+     <entry align="center">table rows</entry>
+     <entry align="center">SQL</entry>
+     <entry align="center">table rows</entry>
+     <entry align="center">table rows and row locks</entry>
+    </row>
+
+    <row>
+     <entry>No special hardware required</entry>
+     <entry align="center"></entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center">&bull;</entry>
+    </row>
+
+    <row>
+     <entry>Allows multiple master servers</entry>
+     <entry align="center"></entry>
+     <entry align="center"></entry>
+     <entry align="center"></entry>
+     <entry align="center"></entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center">&bull;</entry>
+    </row>
+
+    <row>
+     <entry>No master server overhead</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center"></entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center"></entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center"></entry>
+     <entry align="center"></entry>
+    </row>
+
+    <row>
+     <entry>No waiting for multiple servers</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center"></entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center"></entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center"></entry>
+    </row>
+
+    <row>
+     <entry>Master failure will never lose data</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center"></entry>
+     <entry align="center"></entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center"></entry>
+     <entry align="center">&bull;</entry>
+    </row>
+
+    <row>
+     <entry>Slaves accept read-only queries</entry>
+     <entry align="center"></entry>
+     <entry align="center"></entry>
+     <entry align="center">Hot only</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center">&bull;</entry>
+    </row>
+
+    <row>
+     <entry>Per-table granularity</entry>
+     <entry align="center"></entry>
+     <entry align="center"></entry>
+     <entry align="center"></entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center"></entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center">&bull;</entry>
+    </row>
+
+    <row>
+     <entry>No conflict resolution necessary</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center">&bull;</entry>
+     <entry align="center"></entry>
+     <entry align="center"></entry>
+     <entry align="center">&bull;</entry>
+    </row>
+
+   </tbody>
+  </tgroup>
+ </table>
+
+ <para>
+  There are a few solutions that do not fit into the above categories:
+ </para>
+
+ <variablelist>
+
+  <varlistentry>
+   <term>Data Partitioning</term>
+   <listitem>
+
+    <para>
+     Data partitioning splits tables into data sets.  Each set can
+     be modified by only one server.  For example, data can be
+     partitioned by offices, e.g., London and Paris, with a server
+     in each office.  If queries combining London and Paris data
+     are necessary, an application can query both servers, or
+     master/slave replication can be used to keep a read-only copy
+     of the other office's data on each server.
+    </para>
+   </listitem>
+  </varlistentry>
+
+  <varlistentry>
+   <term>Multiple-Server Parallel Query Execution</term>
+   <listitem>
+
+    <para>
+     Many of the above solutions allow multiple servers to handle multiple
+     queries, but none allow a single query to use multiple servers to
+     complete faster.  This solution allows multiple servers to work
+     concurrently on a single query.  It is usually accomplished by
+     splitting the data among servers and having each server execute its
+     part of the query and return results to a central server where they
+     are combined and returned to the user.  <productname>Pgpool-II</>
+     has this capability.  Also, this can be implemented using the
+     <productname>PL/Proxy</> toolset.
+    </para>
+
+   </listitem>
+  </varlistentry>
+
+ </variablelist>
+
+ </sect1>
+
+ <sect1 id="warm-standby">
+  <title>File-based Log Shipping</title>
+
+  <indexterm zone="high-availability">
+   <primary>warm standby</primary>
+  </indexterm>
+
+  <indexterm zone="high-availability">
+   <primary>PITR standby</primary>
+  </indexterm>
+
+  <indexterm zone="high-availability">
+   <primary>standby server</primary>
+  </indexterm>
+
+  <indexterm zone="high-availability">
+   <primary>log shipping</primary>
+  </indexterm>
+
+  <indexterm zone="high-availability">
+   <primary>witness server</primary>
+  </indexterm>
+
+  <indexterm zone="high-availability">
+   <primary>STONITH</primary>
+  </indexterm>
+
+  <para>
+   Continuous archiving can be used to create a <firstterm>high
+   availability</> (HA) cluster configuration with one or more
+   <firstterm>standby servers</> ready to take over operations if the
+   primary server fails. This capability is widely referred to as
+   <firstterm>warm standby</> or <firstterm>log shipping</>.
+  </para>
+
+  <para>
+   The primary and standby server work together to provide this capability,
+   though the servers are only loosely coupled. The primary server operates
+   in continuous archiving mode, while each standby server operates in
+   continuous recovery mode, reading the WAL files from the primary. No
+   changes to the database tables are required to enable this capability,
+   so it offers low administration overhead compared to some other
+   replication solutions. This configuration also has relatively low
+   performance impact on the primary server.
+  </para>
+
+  <para>
+   Directly moving WAL records from one database server to another
+   is typically described as log shipping. <productname>PostgreSQL</>
+   implements file-based log shipping, which means that WAL records are
+   transferred one file (WAL segment) at a time. WAL files (16MB) can be
+   shipped easily and cheaply over any distance, whether it be to an
+   adjacent system, another system at the same site, or another system on
+   the far side of the globe. The bandwidth required for this technique
+   varies according to the transaction rate of the primary server.
+   Record-based log shipping is also possible with custom-developed
+   procedures, as discussed in <xref linkend="warm-standby-record">.
+  </para>
+
+  <para>
+   It should be noted that the log shipping is asynchronous, i.e., the WAL
+   records are shipped after transaction commit. As a result, there is a
+   window for data loss should the primary server suffer a catastrophic
+   failure; transactions not yet shipped will be lost.  The size of the
+   data loss window can be limited by use of the
+   <varname>archive_timeout</varname> parameter, which can be set as low
+   as a few seconds.  However such a low setting will
+   substantially increase the bandwidth required for file shipping.
+   If you need a window of less than a minute or so, it is probably better
+   to consider record-based log shipping.
+  </para>
+
+  <para>
+   The standby server is not available for access, since it is continually
+   performing recovery processing. Recovery performance is sufficiently
+   good that the standby will typically be only moments away from full
+   availability once it has been activated. As a result, this is called
+   a warm standby configuration which offers high
+   availability. Restoring a server from an archived base backup and
+   rollforward will take considerably longer, so that technique only
+   offers a solution for disaster recovery, not high availability.
+  </para>
+
+  <sect2 id="warm-standby-planning">
+   <title>Planning</title>
+
+   <para>
+    It is usually wise to create the primary and standby servers
+    so that they are as similar as possible, at least from the
+    perspective of the database server.  In particular, the path names
+    associated with tablespaces will be passed across unmodified, so both
+    primary and standby servers must have the same mount paths for
+    tablespaces if that feature is used.  Keep in mind that if
+    <xref linkend="sql-createtablespace" endterm="sql-createtablespace-title">
+    is executed on the primary, any new mount point needed for it must
+    be created on the primary and all standby servers before the command
+    is executed. Hardware need not be exactly the same, but experience shows
+    that maintaining two identical systems is easier than maintaining two
+    dissimilar ones over the lifetime of the application and system.
+    In any case the hardware architecture must be the same &mdash; shipping
+    from, say, a 32-bit to a 64-bit system will not work.
+   </para>
+
+   <para>
+    In general, log shipping between servers running different major
+    <productname>PostgreSQL</> release
+    levels is not possible. It is the policy of the PostgreSQL Global
+    Development Group not to make changes to disk formats during minor release
+    upgrades, so it is likely that running different minor release levels
+    on primary and standby servers will work successfully. However, no
+    formal support for that is offered and you are advised to keep primary
+    and standby servers at the same release level as much as possible.
+    When updating to a new minor release, the safest policy is to update
+    the standby servers first &mdash; a new minor release is more likely
+    to be able to read WAL files from a previous minor release than vice
+    versa.
+   </para>
+
+   <para>
+    There is no special mode required to enable a standby server. The
+    operations that occur on both primary and standby servers are
+    normal continuous archiving and recovery tasks. The only point of
+    contact between the two database servers is the archive of WAL files
+    that both share: primary writing to the archive, standby reading from
+    the archive. Care must be taken to ensure that WAL archives from separate
+    primary servers do not become mixed together or confused. The archive
+    need not be large if it is only required for standby operation.
+   </para>
+
+   <para>
+    The magic that makes the two loosely coupled servers work together is
+    simply a <varname>restore_command</> used on the standby that,
+    when asked for the next WAL file, waits for it to become available from
+    the primary. The <varname>restore_command</> is specified in the
+    <filename>recovery.conf</> file on the standby server. Normal recovery
+    processing would request a file from the WAL archive, reporting failure
+    if the file was unavailable.  For standby processing it is normal for
+    the next WAL file to be unavailable, so the standby must wait for
+    it to appear. For files ending in <literal>.backup</> or
+    <literal>.history</> there is no need to wait, and a non-zero return
+    code must be returned. A waiting <varname>restore_command</> can be
+    written as a custom script that loops after polling for the existence of
+    the next WAL file. There must also be some way to trigger failover, which
+    should interrupt the <varname>restore_command</>, break the loop and
+    return a file-not-found error to the standby server. This ends recovery
+    and the standby will then come up as a normal server.
+   </para>
+
+   <para>
+    Pseudocode for a suitable <varname>restore_command</> is:
+<programlisting>
+triggered = false;
+while (!NextWALFileReady() &amp;&amp; !triggered)
+{
+    sleep(100000L);         /* wait for ~0.1 sec */
+    if (CheckForExternalTrigger())
+        triggered = true;
+}
+if (!triggered)
+        CopyWALFileForRecovery();
+</programlisting>
+   </para>
+
+   <para>
+    A working example of a waiting <varname>restore_command</> is provided
+    as a <filename>contrib</> module named <application>pg_standby</>. It
+    should be used as a reference on how to correctly implement the logic
+    described above. It can also be extended as needed to support specific
+    configurations and environments.
+   </para>
+
+   <para>
+    <productname>PostgreSQL</productname> does not provide the system
+    software required to identify a failure on the primary and notify
+    the standby database server.  Many such tools exist and are well
+    integrated with the operating system facilities required for
+    successful failover, such as IP address migration.
+   </para>
+
+   <para>
+    The method for triggering failover is an important part of planning
+    and design. One potential option is the <varname>restore_command</>
+    command.  It is executed once for each WAL file, but the process
+    running the <varname>restore_command</> is created and dies for
+    each file, so there is no daemon or server process, and 
+    signals or a signal handler cannot be used. Therefore, the
+    <varname>restore_command</> is not suitable to trigger failover.
+    It is possible to use a simple timeout facility, especially if
+    used in conjunction with a known <varname>archive_timeout</>
+    setting on the primary. However, this is somewhat error prone
+    since a network problem or busy primary server might be sufficient
+    to initiate failover. A notification mechanism such as the explicit
+    creation of a trigger file is ideal, if this can be arranged.
+   </para>
+
+   <para>
+    The size of the WAL archive can be minimized by using the <literal>%r</>
+    option of the <varname>restore_command</>. This option specifies the
+    last archive file name that needs to be kept to allow the recovery to
+    restart correctly. This can be used to truncate the archive once
+    files are no longer required, assuming the archive is writable from the
+    standby server.
+   </para>
+  </sect2>
+
+  <sect2 id="warm-standby-config">
+   <title>Implementation</title>
+
+   <para>
+    The short procedure for configuring a standby server is as follows. For
+    full details of each step, refer to previous sections as noted.
+    <orderedlist>
+     <listitem>
+      <para>
+       Set up primary and standby systems as nearly identical as
+       possible, including two identical copies of
+       <productname>PostgreSQL</> at the same release level.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Set up continuous archiving from the primary to a WAL archive
+       directory on the standby server. Ensure that
+       <xref linkend="guc-archive-mode">,
+       <xref linkend="guc-archive-command"> and
+       <xref linkend="guc-archive-timeout">
+       are set appropriately on the primary
+       (see <xref linkend="backup-archiving-wal">).
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Make a base backup of the primary server (see <xref
+       linkend="backup-base-backup">), and load this data onto the standby.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Begin recovery on the standby server from the local WAL
+       archive, using a <filename>recovery.conf</> that specifies a
+       <varname>restore_command</> that waits as described
+       previously (see <xref linkend="backup-pitr-recovery">).
+      </para>
+     </listitem>
+    </orderedlist>
+   </para>
+
+   <para>
+    Recovery treats the WAL archive as read-only, so once a WAL file has
+    been copied to the standby system it can be copied to tape at the same
+    time as it is being read by the standby database server.
+    Thus, running a standby server for high availability can be performed at
+    the same time as files are stored for longer term disaster recovery
+    purposes.
+   </para>
+
+   <para>
+    For testing purposes, it is possible to run both primary and standby
+    servers on the same system. This does not provide any worthwhile
+    improvement in server robustness, nor would it be described as HA.
+   </para>
+  </sect2>
+
+  <sect2 id="warm-standby-record">
+   <title>Record-based Log Shipping</title>
+
+   <para>
+    <productname>PostgreSQL</productname> directly supports file-based
+    log shipping as described above. It is also possible to implement
+    record-based log shipping, though this requires custom development.
+   </para>
+
+   <para>
+    An external program can call the <function>pg_xlogfile_name_offset()</>
+    function (see <xref linkend="functions-admin">)
+    to find out the file name and the exact byte offset within it of
+    the current end of WAL.  It can then access the WAL file directly
+    and copy the data from the last known end of WAL through the current end
+    over to the standby servers.  With this approach, the window for data
+    loss is the polling cycle time of the copying program, which can be very
+    small, and there is no wasted bandwidth from forcing partially-used
+    segment files to be archived.  Note that the standby servers'
+    <varname>restore_command</> scripts can only deal with whole WAL files,
+    so the incrementally copied data is not ordinarily made available to
+    the standby servers.  It is of use only when the primary dies &mdash;
+    then the last partial WAL file is fed to the standby before allowing
+    it to come up.  The correct implementation of this process requires
+    cooperation of the <varname>restore_command</> script with the data
+    copying program.
+   </para>
+
+   <para>
+    Starting with <productname>PostgreSQL</> version 9.0, you can use
+    streaming replication (see <xref linkend="streaming-replication">) to
+    achieve the same benefits with less effort.
+   </para>
+  </sect2>
+ </sect1>
+
+  <sect1 id="streaming-replication">
+   <title>Streaming Replication</title>
+
+   <indexterm zone="high-availability">
+    <primary>Streaming Replication</primary>
+   </indexterm>
+
+   <para>
+    <productname>PostgreSQL</> includes a simple streaming replication
+    mechanism, which allows the standby server to stay more up-to-date than
+    file-based log shipping. The standby connects to the primary
+    and the primary starts streaming WAL records from where the standby
+    left off, and continues streaming them as they are generated, without
+    waiting for the WAL file to be filled. So with streaming replication,
+    <varname>archive_timeout</> does not need to be changed to reduce
+    possible data loss.
+   </para>
+
+   <para>
+    Streaming replication relies on file-based continuous archiving for
+    making the base backup and for allowing a standby to catch up if it is
+    disconnected from the primary for long enough for the primary to
+    delete old WAL files still required by the standby.
+   </para>
+
+   <sect2 id="streaming-replication-setup">
+    <title>Setup</title>
+    <para>
+     The short procedure for configuring streaming replication is as follows.
+     For full details of each step, refer to other sections as noted.
+
+     <orderedlist>
+      <listitem>
+       <para>
+        Set up primary and standby systems as near identically as possible,
+        including two identical copies of <productname>PostgreSQL</> at the
+        same release level.
+       </para>
+      </listitem>
+     <listitem>
+      <para>
+       Set up continuous archiving from the primary to a WAL archive located
+       in a directory on the standby server. Ensure that
+       <xref linkend="guc-archive-mode">,
+       <xref linkend="guc-archive-command"> and
+       <xref linkend="guc-archive-timeout">
+       are set appropriately on the primary
+       (see <xref linkend="backup-archiving-wal">).
+      </para>
+     </listitem>
+
+     <listitem>
+      <para>
+       Set <xref linkend="guc-listen-addresses"> and authentication options
+       (see <filename>pg_hba.conf</>) so the standby server can connect to
+       the <literal>replication</> pseudo-database on the primary server (see
+       <xref linkend="streaming-replication-authentication">).
+      </para>
+      <para>
+       On systems that support the keepalive socket option, setting
+       <xref linkend="guc-tcp-keepalives-idle">,
+       <xref linkend="guc-tcp-keepalives-interval"> and
+       <xref linkend="guc-tcp-keepalives-count"> helps the master promptly
+       notice a broken connection.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Set the maximum number of concurrent connections from the standby servers
+       (see <xref linkend="guc-max-wal-senders"> for details).
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Start the <productname>PostgreSQL</> server on the primary.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Make a base backup of the primary server (see
+       <xref linkend="backup-base-backup">), and load this data onto the
+       standby. Note that all files present in <filename>pg_xlog</>
+       and <filename>pg_xlog/archive_status</> on the <emphasis>standby</>
+       server should be removed because they might be obsolete.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       If you're setting up the standby server for high availability purposes,
+       set up WAL archiving, connections and authentication like the primary
+       server, because the standby server will work as a primary server after
+       failover. If you're setting up the standby server for reporting
+       purposes, with no plans to fail over to it, configure the standby
+       accordingly.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Create a recovery command file <filename>recovery.conf</> in the data
+       directory on the standby server. Set <varname>restore_command</varname>
+       as you would in normal recovery from a continuous archiving backup
+       (see <xref linkend="backup-pitr-recovery">). <literal>pg_standby</> or
+       similar tools that wait for the next WAL file to arrive cannot be used
+       with streaming replication, as the server handles retries and waiting
+       itself. Enable <varname>standby_mode</varname>. Set
+       <varname>primary_conninfo</varname> to point to the primary server.
+      </para>
+
+     </listitem>
+     <listitem>
+      <para>
+       Start the <productname>PostgreSQL</> server on the standby. The standby
+       server will go into recovery mode and proceed to receive WAL records
+       from the primary and apply them continuously.
+      </para>
+     </listitem>
+     </orderedlist>
+    </para>
+   </sect2>
+
+   <sect2 id="streaming-replication-authentication">
+    <title>Authentication</title>
+    <para>
+     It is very important that the access privilege for replication be setup
+     properly so that only trusted users can read the WAL stream, because it is
+     easy to extract privileged information from it.
+    </para>
+    <para>
+     Only the superuser is allowed to connect to the primary as the replication
+     standby. So a role with the <literal>SUPERUSER</> and <literal>LOGIN</>
+     privileges needs to be created in the primary.
+    </para>
+    <para>
+     Client authentication for replication is controlled by the
+     <filename>pg_hba.conf</> record specifying <literal>replication</> in the
+     <replaceable>database</> field. For example, if the standby is running on
+     host IP <literal>192.168.1.100</> and the superuser's name for replication
+     is <literal>foo</>, the administrator can add the following line to the
+     <filename>pg_hba.conf</> file on the primary.
+
+<programlisting>
+# Allow the user "foo" from host 192.168.1.100 to connect to the primary
+# as a replication standby if the user's password is correctly supplied.
+#
+# TYPE  DATABASE        USER            CIDR-ADDRESS            METHOD
+host    replication     foo             192.168.1.100/32        md5
+</programlisting>
+    </para>
+    <para>
+     The host name and port number of the primary, connection user name,
+     and password are specified in the <filename>recovery.conf</> file or
+     the corresponding environment variable on the standby.
+     For example, if the primary is running on host IP <literal>192.168.1.50</>,
+     port <literal>5432</literal>, the superuser's name for replication is
+     <literal>foo</>, and the password is <literal>foopass</>, the administrator
+     can add the following line to the <filename>recovery.conf</> file on the
+     standby.
+
+<programlisting>
+# The standby connects to the primary that is running on host 192.168.1.50
+# and port 5432 as the user "foo" whose password is "foopass".
+primary_conninfo = 'host=192.168.1.50 port=5432 user=foo password=foopass'
+</programlisting>
+    </para>
+   </sect2>
+  </sect1>
+
+  <sect1 id="warm-standby-failover">
+   <title>Failover</title>
+
+   <para>
+    If the primary server fails then the standby server should begin
+    failover procedures.
+   </para>
+
+   <para>
+    If the standby server fails then no failover need take place. If the
+    standby server can be restarted, even some time later, then the recovery
+    process can also be restarted immediately, taking advantage of
+    restartable recovery. If the standby server cannot be restarted, then a
+    full new standby server instance should be created.
+   </para>
+
+   <para>
+    If the primary server fails and the standby server becomes the
+    new primary, and then the old primary restarts, you must have
+    a mechanism for informing the old primary that it is no longer the primary. This is
+    sometimes known as <acronym>STONITH</> (Shoot The Other Node In The Head), which is
+    necessary to avoid situations where both systems think they are the
+    primary, which will lead to confusion and ultimately data loss.
+   </para>
+
+   <para>
+    Many failover systems use just two systems, the primary and the standby,
+    connected by some kind of heartbeat mechanism to continually verify the
+    connectivity between the two and the viability of the primary. It is
+    also possible to use a third system (called a witness server) to prevent
+    some cases of inappropriate failover, but the additional complexity
+    might not be worthwhile unless it is set up with sufficient care and
+    rigorous testing.
+   </para>
+
+   <para>
+    Once failover to the standby occurs, there is only a
+    single server in operation. This is known as a degenerate state.
+    The former standby is now the primary, but the former primary is down
+    and might stay down.  To return to normal operation, a standby server
+    must be recreated,
+    either on the former primary system when it comes up, or on a third,
+    possibly new, system. Once complete the primary and standby can be
+    considered to have switched roles. Some people choose to use a third
+    server to provide backup for the new primary until the new standby
+    server is recreated,
+    though clearly this complicates the system configuration and
+    operational processes.
+   </para>
+
+   <para>
+    So, switching from primary to standby server can be fast but requires
+    some time to re-prepare the failover cluster. Regular switching from
+    primary to standby is useful, since it allows regular downtime on
+    each system for maintenance. This also serves as a test of the
+    failover mechanism to ensure that it will really work when you need it.
+    Written administration procedures are advised.
+   </para>
+  </sect1>
+
+ <sect1 id="hot-standby">
+  <title>Hot Standby</title>
+
+  <indexterm zone="high-availability">
+   <primary>Hot Standby</primary>
+  </indexterm>
+
+   <para>
+    Hot Standby is the term used to describe the ability to connect to
+    the server and run queries while the server is in archive recovery. This
+    is useful for both log shipping replication and for restoring a backup
+    to an exact state with great precision.
+    The term Hot Standby also refers to the ability of the server to move
+    from recovery through to normal operation while users continue running
+    queries and/or keep their connections open.
+   </para>
+
+   <para>
+    Running queries in recovery mode is similar to normal query operation,
+    though there are a several usage and administrative differences
+    noted below.
+   </para>
+
+  <sect2 id="hot-standby-users">
+   <title>User's Overview</title>
+
+   <para>
+    Users can connect to the database server while it is in recovery
+    mode and perform read-only queries. Read-only access to system
+    catalogs and views will also occur as normal.
+   </para>
+
+   <para>
+    The data on the standby takes some time to arrive from the primary server
+    so there will be a measurable delay between primary and standby. Running the
+    same query nearly simultaneously on both primary and standby might therefore
+    return differing results. We say that data on the standby is
+    <literal>eventually consistent</literal> with the primary.
+    Queries executed on the standby will be correct with regard to the transactions
+    that had been recovered at the start of the query, or start of first statement
+    in the case of serializable transactions. In comparison with the primary,
+    the standby returns query results that could have been obtained on the primary
+    at some moment in the past.
+   </para>
+
+   <para>
+    When a transaction is started in recovery, the parameter
+    <varname>transaction_read_only</> will be forced to be true, regardless of the
+    <varname>default_transaction_read_only</> setting in <filename>postgresql.conf</>.
+    It can't be manually set to false either. As a result, all transactions
+    started during recovery will be limited to read-only actions. In all
+    other ways, connected sessions will appear identical to sessions
+    initiated during normal processing mode. There are no special commands
+    required to initiate a connection so all interfaces
+    work unchanged. After recovery finishes, the session
+    will allow normal read-write transactions at the start of the next
+    transaction, if these are requested.
+   </para>
+
+   <para>
+    "Read-only" above means no writes to the permanent or temporary database
+    tables.  There are no problems with queries that use transient sort and
+    work files.
+   </para>
+
+   <para>
+    The following actions are allowed:
+
+    <itemizedlist>
+     <listitem>
+      <para>
+       Query access - <command>SELECT</>, <command>COPY TO</> including views and
+       <command>SELECT</> rules
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Cursor commands - <command>DECLARE</>, <command>FETCH</>, <command>CLOSE</>
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Parameters - <command>SHOW</>, <command>SET</>, <command>RESET</>
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Transaction management commands
+        <itemizedlist>
+         <listitem>
+          <para>
+           <command>BEGIN</>, <command>END</>, <command>ABORT</>, <command>START TRANSACTION</>
+          </para>
+         </listitem>
+         <listitem>
+          <para>
+           <command>SAVEPOINT</>, <command>RELEASE</>, <command>ROLLBACK TO SAVEPOINT</>
+          </para>
+         </listitem>
+         <listitem>
+          <para>
+           <command>EXCEPTION</> blocks and other internal subtransactions
+          </para>
+         </listitem>
+        </itemizedlist>
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       <command>LOCK TABLE</>, though only when explicitly in one of these modes:
+       <literal>ACCESS SHARE</>, <literal>ROW SHARE</> or <literal>ROW EXCLUSIVE</>.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Plans and resources - <command>PREPARE</>, <command>EXECUTE</>,
+       <command>DEALLOCATE</>, <command>DISCARD</>
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Plugins and extensions - <command>LOAD</>
+      </para>
+     </listitem>
+    </itemizedlist>
+   </para>
+
+   <para>
+    These actions produce error messages:
+
+    <itemizedlist>
+     <listitem>
+      <para>
+       Data Manipulation Language (DML) - <command>INSERT</>,
+       <command>UPDATE</>, <command>DELETE</>, <command>COPY FROM</>,
+       <command>TRUNCATE</>.
+       Note that there are no allowed actions that result in a trigger
+       being executed during recovery.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Data Definition Language (DDL) - <command>CREATE</>,
+       <command>DROP</>, <command>ALTER</>, <command>COMMENT</>.
+       This also applies to temporary tables also because currently their
+       definition causes writes to catalog tables.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       <command>SELECT ... FOR SHARE | UPDATE</> which cause row locks to be written
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Rules on <command>SELECT</> statements that generate DML commands.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       <command>LOCK</> that explicitly requests a mode higher than <literal>ROW EXCLUSIVE MODE</>.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       <command>LOCK</> in short default form, since it requests <literal>ACCESS EXCLUSIVE MODE</>.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Transaction management commands that explicitly set non-read-only state:
+        <itemizedlist>
+         <listitem>
+          <para>
+            <command>BEGIN READ WRITE</>,
+            <command>START TRANSACTION READ WRITE</>
+          </para>
+         </listitem>
+         <listitem>
+          <para>
+            <command>SET TRANSACTION READ WRITE</>,
+            <command>SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE</>
+          </para>
+         </listitem>
+         <listitem>
+          <para>
+           <command>SET transaction_read_only = off</>
+          </para>
+         </listitem>
+        </itemizedlist>
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Two-phase commit commands - <command>PREPARE TRANSACTION</>,
+       <command>COMMIT PREPARED</>, <command>ROLLBACK PREPARED</>
+       because even read-only transactions need to write WAL in the
+       prepare phase (the first phase of two phase commit).
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Sequence updates - <function>nextval()</>, <function>setval()</>
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       LISTEN, UNLISTEN, NOTIFY
+      </para>
+     </listitem>
+    </itemizedlist>
+   </para>
+
+   <para>
+    Note that the current behavior of read only transactions when not in
+    recovery is to allow the last two actions, so there are small and
+    subtle differences in behavior between read-only transactions
+    run on a standby and run during normal operation.
+    It is possible that <command>LISTEN</>, <command>UNLISTEN</>,
+    and temporary tables might be allowed in a future release.
+   </para>
+
+   <para>
+    If failover or switchover occurs the database will switch to normal
+    processing mode. Sessions will remain connected while the server
+    changes mode. Current transactions will continue, though will remain
+    read-only. After recovery is complete, it will be possible to initiate
+    read-write transactions.
+   </para>
+
+   <para>
+    Users will be able to tell whether their session is read-only by
+    issuing <command>SHOW transaction_read_only</>.  In addition, a set of
+    functions (<xref linkend="functions-recovery-info-table">) allow users to
+    access information about the standby server. These allow you to write
+    programs that are aware of the current state of the database. These
+    can be used to monitor the progress of recovery, or to allow you to
+    write complex programs that restore the database to particular states.
+   </para>
+
+   <para>
+    In recovery, transactions will not be permitted to take any table lock
+    higher than <literal>RowExclusiveLock</>. In addition, transactions may never assign
+    a TransactionId and may never write WAL.
+    Any <command>LOCK TABLE</> command that runs on the standby and requests
+    a specific lock mode higher than <literal>ROW EXCLUSIVE MODE</> will be rejected.
+   </para>
+
+   <para>
+    In general queries will not experience lock conflicts from the database
+    changes made by recovery. This is because recovery follows normal
+    concurrency control mechanisms, known as <acronym>MVCC</>. There are
+    some types of change that will cause conflicts, covered in the following
+    section.
+   </para>
+  </sect2>
+
+  <sect2 id="hot-standby-conflict">
+   <title>Handling query conflicts</title>
+
+   <para>
+    The primary and standby nodes are in many ways loosely connected. Actions
+    on the primary will have an effect on the standby. As a result, there is
+    potential for negative interactions or conflicts between them. The easiest
+    conflict to understand is performance: if a huge data load is taking place
+    on the primary then this will generate a similar stream of WAL records on the
+    standby, so standby queries may contend for system resources, such as I/O.
+   </para>
+
+   <para>
+    There are also additional types of conflict that can occur with Hot Standby.
+    These conflicts are <emphasis>hard conflicts</> in the sense that queries
+    might need to be cancelled and, in some cases, sessions disconnected to resolve them.
+    The user is provided with several ways to handle these
+    conflicts, though it is important to first understand the possible causes
+    of conflicts:
+
+      <itemizedlist>
+       <listitem>
+        <para>
+         Access Exclusive Locks from primary node, including both explicit
+         <command>LOCK</> commands and various <acronym>DDL</> actions
+        </para>
+       </listitem>
+       <listitem>
+        <para>
+         Dropping tablespaces on the primary while standby queries are using
+         those tablespaces for temporary work files (<varname>work_mem</> overflow)
+        </para>
+       </listitem>
+       <listitem>
+        <para>
+         Dropping databases on the primary while users are connected to that
+         database on the standby.
+        </para>
+       </listitem>
+       <listitem>
+        <para>
+         The standby waiting longer than <varname>max_standby_delay</>
+         to acquire a buffer cleanup lock.
+        </para>
+       </listitem>
+       <listitem>
+        <para>
+         Early cleanup of data still visible to the current query's snapshot
+        </para>
+       </listitem>
+      </itemizedlist>
+   </para>
+
+   <para>
+    Some WAL redo actions will be for <acronym>DDL</> execution. These DDL
+    actions are replaying changes that have already committed on the primary
+    node, so they must not fail on the standby node. These DDL locks take
+    priority and will automatically *cancel* any read-only transactions that
+    get in their way, after a grace period. This is similar to the possibility
+    of being canceled by the deadlock detector.  But in this case, the standby
+    recovery process always wins, since the replayed actions must not fail.
+    This also ensures that replication does not fall behind while waiting for a
+    query to complete. This prioritization presumes that the standby exists
+    primarily for high availability, and that adjusting the grace period
+    will allow a sufficient guard against unexpected cancellation.
+   </para>
+
+   <para>
+    An example of the above would be an administrator on the primary server
+    running <command>DROP TABLE</> on a table that is currently being queried
+    on the standby server.
+    Clearly the query cannot continue if <command>DROP TABLE</>
+    proceeds. If this situation occurred on the primary, the <command>DROP TABLE</>
+    would wait until the query had finished. When <command>DROP TABLE</> is
+    run on the primary, the primary doesn't have
+    information about which queries are running on the standby, so it
+    cannot wait for any of the standby queries. The WAL change records come through to the
+    standby while the standby query is still running, causing a conflict.
+   </para>
+
+   <para>
+    The most common reason for conflict between standby queries and WAL redo is
+    "early cleanup". Normally, <productname>PostgreSQL</> allows cleanup of old
+    row versions when there are no users who need to see them to ensure correct
+    visibility of data (the heart of MVCC). If there is a standby query that has
+    been running for longer than any query on the primary then it is possible
+    for old row versions to be removed by either a vacuum or HOT. This will
+    then generate WAL records that, if applied, would remove data on the
+    standby that might <emphasis>potentially</> be required by the standby query.
+    In more technical language, the primary's xmin horizon is later than
+    the standby's xmin horizon, allowing dead rows to be removed.
+   </para>
+
+   <para>
+    Experienced users should note that both row version cleanup and row version
+    freezing will potentially conflict with recovery queries. Running a
+    manual <command>VACUUM FREEZE</> is likely to cause conflicts even on tables
+    with no updated or deleted rows.
+   </para>
+
+   <para>
+    There are a number of choices for resolving query conflicts.  The default
+    is to wait and hope the query finishes. The server will wait
+    automatically until the lag between primary and standby is at most
+    <varname>max_standby_delay</> seconds. Once that grace period expires,
+    one of the following actions is taken:
+
+      <itemizedlist>
+       <listitem>
+        <para>
+         If the conflict is caused by a lock, the conflicting standby
+         transaction is cancelled immediately. If the transaction is
+         idle-in-transaction, then the session is aborted instead.
+         This behavior might change in the future.
+        </para>
+       </listitem>
+
+       <listitem>
+        <para>
+         If the conflict is caused by cleanup records, the standby query is informed
+         a conflict has occurred and that it must cancel itself to avoid the
+         risk that it silently fails to read relevant data because
+         that data has been removed. (This is regrettably similar to the
+         much feared and iconic error message "snapshot too old"). Some cleanup
+         records only conflict with older queries, while others
+         can affect all queries.
+        </para>
+
+        <para>
+         If cancellation does occur, the query and/or transaction can always
+         be re-executed. The error is dynamic and will not necessarily reoccur
+         if the query is executed again.
+        </para>
+       </listitem>
+      </itemizedlist>
+   </para>
+
+   <para>
+    <varname>max_standby_delay</> is set in <filename>postgresql.conf</>.
+    The parameter applies to the server as a whole, so if the delay is consumed
+    by a single query then there may be little or no waiting for queries that
+    follow, though they will have benefited equally from the initial
+    waiting period. The server may take time to catch up again before the grace
+    period is available again, though if there is a heavy and constant stream
+    of conflicts it may seldom catch up fully.
+   </para>
+
+   <para>
+    Users should be clear that tables that are regularly and heavily updated on the
+    primary server will quickly cause cancellation of longer running queries on
+    the standby. In those cases <varname>max_standby_delay</> can be
+    considered similar to setting
+    <varname>statement_timeout</>.
+    </para>
+
+   <para>
+    Other remedial actions exist if the number of cancellations is unacceptable.
+    The first option is to connect to the primary server and keep a query active
+    for as long as needed to run queries on the standby. This guarantees that
+    a WAL cleanup record is never generated and query conflicts do not occur,
+    as described above. This could be done using <filename>contrib/dblink</>
+    and <function>pg_sleep()</>, or via other mechanisms. If you do this, you
+    should note that this will delay cleanup of dead rows on the primary by
+    vacuum or HOT, and people might find this undesirable. However, remember
+    that the primary and standby nodes are linked via the WAL, so the cleanup
+    situation is no different from the case where the query ran on the primary
+    node itself.  And you are still getting the benefit of off-loading the
+    execution onto the standby.
+   </para>
+
+   <para>
+    It is also possible to set <varname>vacuum_defer_cleanup_age</> on the primary
+    to defer the cleanup of records by autovacuum, <command>VACUUM</>
+    and HOT. This might allow
+    more time for queries to execute before they are cancelled on the standby,
+    without the need for setting a high <varname>max_standby_delay</>.
+   </para>
+
+   <para>
+    Three-way deadlocks are possible between <literal>AccessExclusiveLocks</> arriving from
+    the primary, cleanup WAL records that require buffer cleanup locks, and
+    user requests that are waiting behind replayed <literal>AccessExclusiveLocks</>. Deadlocks
+    are resolved immediately, should they occur, though they are thought to be
+    rare in practice.
+   </para>
+
+   <para>
+    Dropping tablespaces or databases is discussed in the administrator's
+    section since they are not typical user situations.
+   </para>
+  </sect2>
+
+  <sect2 id="hot-standby-admin">
+   <title>Administrator's Overview</title>
+
+   <para>
+    If there is a <filename>recovery.conf</> file present, the server will start
+    in Hot Standby mode by default, though <varname>recovery_connections</> can
+    be disabled via <filename>postgresql.conf</>. The server might take
+    some time to enable recovery connections since the server must first complete
+    sufficient recovery to provide a consistent state against which queries
+    can run before enabling read only connections.  During this period,
+    clients that attempt to connect will be refused with an error message.
+    To confirm the server has come up, either loop retrying to connect from
+    the application, or look for these messages in the server logs:
+
+<programlisting>
+LOG:  entering standby mode
+
+... then some time later ...
+
+LOG:  consistent recovery state reached
+LOG:  database system is ready to accept read only connections
+</programlisting>
+
+    Consistency information is recorded once per checkpoint on the primary, as long
+    as <varname>recovery_connections</> is enabled on the primary.  It is not possible
+    to enable recovery connections on the standby when reading WAL written during the
+    period that <varname>recovery_connections</> was disabled on the primary.
+    Reaching a consistent state can also be delayed in the presence
+    of both of these conditions:
+
+      <itemizedlist>
+       <listitem>
+        <para>
+         A write transaction has more than 64 subtransactions
+        </para>
+       </listitem>
+       <listitem>
+        <para>
+         Very long-lived write transactions
+        </para>
+       </listitem>
+      </itemizedlist>
+
+    If you are running file-based log shipping ("warm standby"), you might need
+    to wait until the next WAL file arrives, which could be as long as the
+    <varname>archive_timeout</> setting on the primary.
+   </para>
+
+   <para>
+    The setting of some parameters on the standby will need reconfiguration
+    if they have been changed on the primary. For these parameters,
+    the value on the standby must
+    be equal to or greater than the value on the primary. If these parameters
+    are not set high enough then the standby will not be able to process
+    recovering transactions properly. If these values are set too low
+    the server will halt. Higher values can then be supplied and the server
+    restarted to begin recovery again.  The parameters are:
+
+      <itemizedlist>
+       <listitem>
+        <para>
+         <varname>max_connections</>
+        </para>
+       </listitem>
+       <listitem>
+        <para>
+         <varname>max_prepared_transactions</>
+        </para>
+       </listitem>
+       <listitem>
+        <para>
+         <varname>max_locks_per_transaction</>
+        </para>
+       </listitem>
+      </itemizedlist>
+   </para>
+
+   <para>
+    It is important that the administrator consider the appropriate setting
+    of <varname>max_standby_delay</>, set in <filename>postgresql.conf</>.
+    There is no optimal setting, so it should be set according to business
+    priorities. For example if the server is primarily tasked as a High
+    Availability server, then you may wish to lower
+    <varname>max_standby_delay</> or even set it to zero, though that is a
+    very aggressive setting. If the standby server is tasked as an additional
+    server for decision support queries then it might be acceptable to set this
+    to a value of many hours (in seconds).
+   </para>
+
+   <para>
+    Transaction status "hint bits" written on the primary are not WAL-logged,
+    so data on the standby will likely re-write the hints again on the standby.
+    Thus, the standby server will still perform disk writes even though
+    all users are read-only; no changes occur to the data values
+    themselves.  Users will still write large sort temporary files and
+    re-generate relcache info files, so no part of the database
+    is truly read-only during hot standby mode. There is no restriction
+    on the use of set returning functions, or other users of
+    <function>tuplestore</>/<function>tuplesort</>
+    code. Note also that writes to remote databases will still be possible,
+    even though the transaction is read-only locally.
+   </para>
+
+   <para>
+    The following types of administration commands are not accepted
+    during recovery mode:
+
+      <itemizedlist>
+       <listitem>
+        <para>
+         Data Definition Language (DDL) - e.g. <command>CREATE INDEX</>
+        </para>
+       </listitem>
+       <listitem>
+        <para>
+         Privilege and Ownership - <command>GRANT</>, <command>REVOKE</>,
+         <command>REASSIGN</>
+        </para>
+       </listitem>
+       <listitem>
+        <para>
+         Maintenance commands - <command>ANALYZE</>, <command>VACUUM</>,
+         <command>CLUSTER</>, <command>REINDEX</>
+        </para>
+       </listitem>
+      </itemizedlist>
+   </para>
+
+   <para>
+    Again, note that some of these commands are actually allowed during
+    "read only" mode transactions on the primary.
+   </para>
+
+   <para>
+    As a result, you cannot create additional indexes that exist solely
+    on the standby, nor statistics that exist solely on the standby.
+    If these administration commands are needed, they should be executed
+    on the primary, and eventually those changes will propagate to the
+    standby.
+   </para>
+
+   <para>
+    <function>pg_cancel_backend()</> will work on user backends, but not the
+    Startup process, which performs recovery. <structname>pg_stat_activity</structname> does not
+    show an entry for the Startup process, nor do recovering transactions
+    show as active. As a result, <structname>pg_prepared_xacts</structname> is always empty during
+    recovery. If you wish to resolve in-doubt prepared transactions,
+    view <literal>pg_prepared_xacts</> on the primary and issue commands to
+    resolve transactions there.
+   </para>
+
+   <para>
+    <structname>pg_locks</structname> will show locks held by backends,
+    as normal. <structname>pg_locks</structname> also shows
+    a virtual transaction managed by the Startup process that owns all
+    <literal>AccessExclusiveLocks</> held by transactions being replayed by recovery.
+    Note that the Startup process does not acquire locks to
+    make database changes, and thus locks other than <literal>AccessExclusiveLocks</>
+    do not show in <structname>pg_locks</structname> for the Startup
+    process; they are just presumed to exist.
+   </para>
+
+   <para>
+    The <productname>Nagios</> plugin <productname>check_pgsql</> will
+    work, because the simple information it checks for exists.
+    The <productname>check_postgres</> monitoring script will also work,
+    though some reported values could give different or confusing results.
+    For example, last vacuum time will not be maintained, since no
+    vacuum occurs on the standby.  Vacuums running on the primary
+    do still send their changes to the standby.
+   </para>
+
+   <para>
+    WAL file control commands will not work during recovery,
+    e.g. <function>pg_start_backup</>, <function>pg_switch_xlog</> etc.
+   </para>
+
+   <para>
+    Dynamically loadable modules work, including <structname>pg_stat_statements</>.
+   </para>
+
+   <para>
+    Advisory locks work normally in recovery, including deadlock detection.
+    Note that advisory locks are never WAL logged, so it is impossible for
+    an advisory lock on either the primary or the standby to conflict with WAL
+    replay. Nor is it possible to acquire an advisory lock on the primary
+    and have it initiate a similar advisory lock on the standby. Advisory
+    locks relate only to the server on which they are acquired.
+   </para>
+
+   <para>
+    Trigger-based replication systems such as <productname>Slony</>,
+    <productname>Londiste</> and <productname>Bucardo</> won't run on the
+    standby at all, though they will run happily on the primary server as
+    long as the changes are not sent to standby servers to be applied.
+    WAL replay is not trigger-based so you cannot relay from the
+    standby to any system that requires additional database writes or
+    relies on the use of triggers.
+   </para>
+
+   <para>
+    New oids cannot be assigned, though some <acronym>UUID</> generators may still
+    work as long as they do not rely on writing new status to the database.
+   </para>
+
+   <para>
+    Currently, temporary table creation is not allowed during read only
+    transactions, so in some cases existing scripts will not run correctly.
+    This restriction might be relaxed in a later release. This is
+    both a SQL Standard compliance issue and a technical issue.
+   </para>
+
+   <para>
+    <command>DROP TABLESPACE</> can only succeed if the tablespace is empty.
+    Some standby users may be actively using the tablespace via their
+    <varname>temp_tablespaces</> parameter. If there are temporary files in the
+    tablespace, all active queries are cancelled to ensure that temporary
+    files are removed, so the tablespace can be removed and WAL replay
+    can continue.
+   </para>
+
+   <para>
+    Running <command>DROP DATABASE</>, <command>ALTER DATABASE ... SET TABLESPACE</>,
+    or <command>ALTER DATABASE ... RENAME</> on primary will generate a log message
+    that will cause all users connected to that database on the standby to be
+    forcibly disconnected. This action occurs immediately, whatever the setting of
+    <varname>max_standby_delay</>.
+   </para>
+
+   <para>
+    In normal (non-recovery) mode, if you issue <command>DROP USER</> or <command>DROP ROLE</>
+    for a role with login capability while that user is still connected then
+    nothing happens to the connected user - they remain connected. The user cannot
+    reconnect however. This behavior applies in recovery also, so a
+    <command>DROP USER</> on the primary does not disconnect that user on the standby.
+   </para>
+
+   <para>
+    The statististics collector is active during recovery. All scans, reads, blocks,
+    index usage, etc., will be recorded normally on the standby. Replayed
+    actions will not duplicate their effects on primary, so replaying an
+    insert will not increment the Inserts column of pg_stat_user_tables.
+    The stats file is deleted at the start of recovery, so stats from primary
+    and standby will differ; this is considered a feature, not a bug.
+   </para>
+
+   <para>
+    Autovacuum is not active during recovery, it will start normally at the
+    end of recovery.
+   </para>
+
+   <para>
+    The background writer is active during recovery and will perform
+    restartpoints (similar to checkpoints on the primary) and normal block
+    cleaning activities. This can include updates of the hint bit
+    information stored on the standby server.
+    The <command>CHECKPOINT</> command is accepted during recovery,
+    though it performs a restartpoint rather than a new checkpoint.
+   </para>
+  </sect2>
+
+  <sect2 id="hot-standby-parameters">
+   <title>Hot Standby Parameter Reference</title>
+
+   <para>
+    Various parameters have been mentioned above in <xref linkend="hot-standby-admin">
+    and <xref linkend="hot-standby-conflict">.
+   </para>
+
+   <para>
+    On the primary, parameters <varname>recovery_connections</> and
+    <varname>vacuum_defer_cleanup_age</> can be used.
+    <varname>max_standby_delay</> has no effect if set on the primary.
+   </para>
+
+   <para>
+    On the standby, parameters <varname>recovery_connections</> and
+    <varname>max_standby_delay</> can be used.
+    <varname>vacuum_defer_cleanup_age</> has no effect during recovery.
+   </para>
+  </sect2>
+
+  <sect2 id="hot-standby-caveats">
+   <title>Caveats</title>
+
+   <para>
+    There are several limitations of Hot Standby.
+    These can and probably will be fixed in future releases:
+
+  <itemizedlist>
+   <listitem>
+    <para>
+     Operations on hash indexes are not presently WAL-logged, so
+     replay will not update these indexes.  Hash indexes will not be
+     used for query plans during recovery.
+    </para>
+   </listitem>
+   <listitem>
+    <para>
+     Full knowledge of running transactions is required before snapshots
+     can be taken. Transactions that use large numbers of subtransactions
+     (currently greater than 64) will delay the start of read only
+     connections until the completion of the longest running write transaction.
+     If this situation occurs, explanatory messages will be sent to the server log.
+    </para>
+   </listitem>
+   <listitem>
+    <para>
+     Valid starting points for recovery connections are generated at each
+     checkpoint on the master. If the standby is shut down while the master
+     is in a shutdown state, it might not be possible to re-enter Hot Standby
+     until the primary is started up, so that it generates further starting
+     points in the WAL logs.  This situation isn't a problem in the most
+     common situations where it might happen. Generally, if the primary is
+     shut down and not available anymore, that's likely due to a serious
+     failure that requires the standby being converted to operate as
+     the new primary anyway.  And in situations where the primary is
+     being intentionally taken down, coordinating to make sure the standby
+     becomes the new primary smoothly is also standard procedure.
+    </para>
+   </listitem>
+   <listitem>
+    <para>
+     At the end of recovery, <literal>AccessExclusiveLocks</> held by prepared transactions
+     will require twice the normal number of lock table entries. If you plan
+     on running either a large number of concurrent prepared transactions
+     that normally take <literal>AccessExclusiveLocks</>, or you plan on having one
+     large transaction that takes many <literal>AccessExclusiveLocks</>, you are
+     advised to select a larger value of <varname>max_locks_per_transaction</>,
+     up to, but never more than twice the value of the parameter setting on
+     the primary server. You need not consider this at all if
+     your setting of <varname>max_prepared_transactions</> is <literal>0</>.
+    </para>
+   </listitem>
+  </itemizedlist>
+
+   </para>
+  </sect2>
+
+ </sect1>
+
+  <sect1 id="backup-incremental-updated">
+   <title>Incrementally Updated Backups</title>
+
+  <indexterm zone="high-availability">
+   <primary>incrementally updated backups</primary>
+  </indexterm>
+
+  <indexterm zone="high-availability">
+   <primary>change accumulation</primary>
+  </indexterm>
+
+   <para>
+    In a warm standby configuration, it is possible to offload the expense of
+    taking periodic base backups from the primary server; instead base backups
+    can be made by backing
+    up a standby server's files.  This concept is generally known as
+    incrementally updated backups, log change accumulation, or more simply,
+    change accumulation.
+   </para>
+
+   <para>
+    If we take a file system backup of the standby server's data
+    directory while it is processing
+    logs shipped from the primary, we will be able to reload that backup and
+    restart the standby's recovery process from the last restart point.
+    We no longer need to keep WAL files from before the standby's restart point.
+    If recovery is needed, it will be faster to recover from the incrementally
+    updated backup than from the original base backup.
+   </para>
+
+   <para>
+    Since the standby server is not <quote>live</>, it is not possible to
+    use <function>pg_start_backup()</> and <function>pg_stop_backup()</>
+    to manage the backup process; it will be up to you to determine how
+    far back you need to keep WAL segment files to have a recoverable
+    backup.  You can do this by running <application>pg_controldata</>
+    on the standby server to inspect the control file and determine the
+    current checkpoint WAL location, or by using the
+    <varname>log_checkpoints</> option to print values to the standby's
+    server log.
+   </para>
+  </sect1>
+
+</chapter>
