@@ -340,25 +340,25 @@ ExecSort(SortState *node)
 		jobId = tuplesort_get_workersId(tuplesortstate);
 //		ereport(DEBUG1,(errmsg("nodeSort - going to fetch first tuple")));
 		if (!tuplesort_gettupleslot_from_worker(tuplesortstate, ScanDirectionIsForward(dir), slot)) {
-			ereport(LOG,(errmsg("nodeSort - try cleaning")));
-			HOLD_INTERRUPTS();
-			SpinLockAcquire(&workersList->mutex);
-			foreach(lc, workersList->list) {
-				worker = (Worker *) lfirst(lc);
-				HOLD_INTERRUPTS();
-				SpinLockAcquire(&worker->mutex);
-				if (worker->valid && worker->state == PRL_WORKER_STATE_FINISHED_ACK && worker->work->jobId == jobId) {
-					worker->state = PRL_WORKER_STATE_END;
-					ereport(LOG,(errmsg("nodeSort - performing one bufferqueue cleaning")));
-					destroyBufferQueue(worker->work->workParams->bufferQueue);
-				}
-				SpinLockRelease(&worker->mutex);
-				RESUME_INTERRUPTS();
-			}
-			SpinLockRelease(&workersList->mutex);
-			RESUME_INTERRUPTS();
-			ereport(LOG,(errmsg("nodeSort - finished cleaning")));
-			printGetUsage();
+//			ereport(LOG,(errmsg("nodeSort - try cleaning")));
+//			HOLD_INTERRUPTS();
+//			SpinLockAcquire(&workersList->mutex);
+//			foreach(lc, workersList->list) {
+//				worker = (Worker *) lfirst(lc);
+//				HOLD_INTERRUPTS();
+//				SpinLockAcquire(&worker->mutex);
+//				if (worker->valid && worker->state == PRL_WORKER_STATE_FINISHED_ACK && worker->work->jobId == jobId) {
+//					worker->state = PRL_WORKER_STATE_END;
+//					ereport(LOG,(errmsg("nodeSort - performing one bufferqueue cleaning")));
+//					destroyBufferQueue(worker->work->workParams->bufferQueue);
+//				}
+//				SpinLockRelease(&worker->mutex);
+//				RESUME_INTERRUPTS();
+//			}
+//			SpinLockRelease(&workersList->mutex);
+//			RESUME_INTERRUPTS();
+//			ereport(LOG,(errmsg("nodeSort - finished cleaning")));
+//			printGetUsage();
 		}
 	} else {
 		if (lts) {
@@ -455,6 +455,10 @@ ExecInitSort(Sort *node, EState *estate, int eflags)
 void
 ExecEndSort(SortState *node)
 {
+	bool prl_on = false;
+	Worker * worker;
+	ListCell * lc;
+	long int jobId = 0;
 	SO1_printf("ExecEndSort: %s\n",
 			   "shutting down sort node");
 
@@ -468,8 +472,33 @@ ExecEndSort(SortState *node)
 	/*
 	 * Release tuplesort resources
 	 */
-	if (node->tuplesortstate != NULL)
+	if (node->tuplesortstate != NULL) {
+		prl_on = tuplesort_is_parallel(node->tuplesortstate);
+		if (prl_on) {
+			jobId = tuplesort_get_workersId(node->tuplesortstate);
+			ereport(LOG,(errmsg("nodeSort - try cleaning")));
+			HOLD_INTERRUPTS();
+			SpinLockAcquire(&workersList->mutex);
+			foreach(lc, workersList->list) {
+				worker = (Worker *) lfirst(lc);
+				HOLD_INTERRUPTS();
+				SpinLockAcquire(&worker->mutex);
+				if (worker->valid && worker->state == PRL_WORKER_STATE_FINISHED_ACK && worker->work->jobId == jobId) {
+					worker->state = PRL_WORKER_STATE_END;
+					ereport(LOG,(errmsg("nodeSort - performing one bufferqueue cleaning")));
+					destroyBufferQueue(worker->work->workParams->bufferQueue);
+				}
+				SpinLockRelease(&worker->mutex);
+				RESUME_INTERRUPTS();
+			}
+			SpinLockRelease(&workersList->mutex);
+			RESUME_INTERRUPTS();
+			ereport(LOG,(errmsg("nodeSort - finished cleaning")));
+			printGetUsage();
+		}
+		
 		tuplesort_end((Tuplesortstate *) node->tuplesortstate);
+	}
 	node->tuplesortstate = NULL;
 
 	/*
