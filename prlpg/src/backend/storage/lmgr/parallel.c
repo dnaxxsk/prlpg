@@ -179,8 +179,7 @@ void destroyBufferQueue(BufferQueue * bq) {
 	
 	if (bq->head != NULL || bq->tail != NULL) {
 		// problem
-		ereport(FATAL, (errcode(ERRCODE_OUT_OF_MEMORY),
-								errmsg("bufferqueue must be empty in destroy method")));
+		ereport(WARNING, (errcode(ERRCODE_OUT_OF_MEMORY),	errmsg("bufferqueue must be empty in destroy method")));
 	}
 
 	pfree(bq);
