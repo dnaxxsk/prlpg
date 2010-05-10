@@ -3266,7 +3266,7 @@ void distributeToWorker(Tuplesortstate * state, TupleTableSlot * slot,
 			bqc->last = true;
 			// ooh .. so many pointers ..
 			bufferQueueAdd(state->workers[i]->work->workParams->bufferQueue,
-					bqc);
+					bqc, false);
 			MemoryContextSwitchTo(oldContext);
 		}
 	} else {
@@ -3288,7 +3288,7 @@ void distributeToWorker(Tuplesortstate * state, TupleTableSlot * slot,
 		// it is not last
 		bqc->last = false;
 		// add to queue
-		bufferQueueAdd(state->workers[now]->work->workParams->bufferQueue, bqc);
+		bufferQueueAdd(state->workers[now]->work->workParams->bufferQueue, bqc, false);
 		// switch back to context we started with
 		MemoryContextSwitchTo(oldContext);
 //		ereport(DEBUG1,(errmsg("nodeSort - pushing tuple to worker %d finished.", now)));

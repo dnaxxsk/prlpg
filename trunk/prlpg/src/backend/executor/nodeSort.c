@@ -27,14 +27,6 @@
 
 #include <pthread.h>
 
-void * threadedPerformSort(void * data)
-{
-	Tuplesortstate * state;
-   state = (Tuplesortstate *) data; 
-   tuplesort_performsort(state);
-   pthread_exit(NULL);
-}
-
 /* ----------------------------------------------------------------
  *		ExecSort
  *
@@ -55,22 +47,17 @@ ExecSort(SortState *node)
 	EState	   *estate;
 	ScanDirection dir;
 	Tuplesortstate *tuplesortstate;
-	Tuplesortstate * tuplesortstates[2];
 	TupleTableSlot *slot;
 	MemoryContext oldContext;
 	WorkDef * work;
-	Worker * worker;
 	//guc variable
 	int prl_level = parallel_sort_level;
 	bool prl_on = parallel_execution_allowed;
-	int i,j;
-	ListCell * lc;
+	int i,j, ii;
 	int readyCnt = 0;
 	SortParams * sortParams;
 	MemoryContext currctx;
 	long int jobId = 0;
-	// DO NOT TURN ON THIS THREADED BEAST !!!!! ;-)
-	bool lts = false;
 	
 	currctx = CurrentMemoryContext;
 
@@ -123,34 +110,6 @@ ExecSort(SortState *node)
 											  plannode->nullsFirst,
 											  work_mem,
 											  node->randomAccess);
-
-		if (lts) {
-			// create two slots for tapesets
-			prepare_for_multiLTS(tuplesortstate, 2);
-			tuplesortstates[0] = tuplesort_begin_heap(tupDesc,
-												  plannode->numCols,
-												  plannode->sortColIdx,
-												  plannode->sortOperators,
-												  plannode->nullsFirst,
-												  work_mem /2,
-												  node->randomAccess);
-			register_tuplesort_state(tuplesortstate, tuplesortstates[0],0);
-			if (node->bounded) {
-				tuplesort_set_bound(tuplesortstates[0], node->bound);
-			}
-			tuplesortstates[1] = tuplesort_begin_heap(tupDesc,
-												plannode->numCols,
-												  plannode->sortColIdx,
-												  plannode->sortOperators,
-												  plannode->nullsFirst,
-												  work_mem /2,
-												  node->randomAccess);
-			register_tuplesort_state(tuplesortstate, tuplesortstates[1],1);
-			if (node->bounded) {
-				tuplesort_set_bound(tuplesortstates[1], node->bound);
-			}
-		}
-		
 		
 		if (node->bounded)
 			tuplesort_set_bound(tuplesortstate, node->bound);
@@ -160,58 +119,22 @@ ExecSort(SortState *node)
 		
 		if (!prl_on) {
 			ereport(LOG,(errmsg("nodeSort std - before sending tuples to workers")));
-			int ii = 0;
+			ii = 0;
 			for (;;)
 			{
 				slot = ExecProcNode(outerNode);
 				if (TupIsNull(slot))
 					break;
-				if (lts) {
-					if (ii == 0) {
-						tuplesort_puttupleslot(tuplesortstates[0], slot);
-						ii = 1;
-					} else {
-						tuplesort_puttupleslot(tuplesortstates[1], slot);
-						ii = 0;
-					}
-				} else {
-					tuplesort_puttupleslot(tuplesortstate, slot);
-				}
+				tuplesort_puttupleslot(tuplesortstate, slot);
 			}
 			
-			if (lts) {
-				pthread_t threads[2];
-				int rc;
-				long t;
-				for(t=0; t<2; t++){
-					rc = pthread_create(&threads[t], NULL, threadedPerformSort, (void *)(tuplesortstates[t]));
-					if (rc) {
-						printf("ERROR; return code from pthread_create() is %d\n", rc);
-					}
-				}
-				// wait until those lazy workers finish ... 
-				for (t = 0; t < 2; t++) {
-					rc = pthread_join(threads[t], NULL);
-					if (rc) {
-						printf("ERROR; return code from pthread_join() is %d\n", rc);
-					}
-				}
-				/*
-				ereport(LOG, (errmsg("nodeSort - before 2 performsorts")));
-				tuplesort_performsort(tuplesortstates[0]);
-				ereport(LOG, (errmsg("nodeSort - after first performsort")));
-				tuplesort_performsort(tuplesortstates[1]);
-				ereport(LOG, (errmsg("nodeSort - after 2 performsorts")));*/
-				preForMergeMultiLTS(tuplesortstate, ScanDirectionIsForward(dir));
-				
-			} else {
-				ereport(LOG, (errmsg("nodeSort std - before performsort")));
-				/*
-				 * Complete the sort.
-				 */
-				tuplesort_performsort(tuplesortstate);
-				ereport(LOG, (errmsg("nodeSort std - after performsort")));
-			}
+			
+			ereport(LOG, (errmsg("nodeSort std - before performsort")));
+			/*
+			 * Complete the sort.
+			 */
+			tuplesort_performsort(tuplesortstate);
+			ereport(LOG, (errmsg("nodeSort std - after performsort")));
 			/*
 			 * restore to user specified direction
 			 */
@@ -289,7 +212,6 @@ ExecSort(SortState *node)
 			 */
 			for (;;) {
 				slot = ExecProcNode(outerNode);
-				//++readyCnt;
 				if (TupIsNull(slot)) {
 					distributeToWorker(tuplesortstate, NULL, true);
 					break;
@@ -338,35 +260,11 @@ ExecSort(SortState *node)
 	slot = node->ss.ps.ps_ResultTupleSlot;
 	if (prl_on) {
 		jobId = tuplesort_get_workersId(tuplesortstate);
-//		ereport(DEBUG1,(errmsg("nodeSort - going to fetch first tuple")));
 		if (!tuplesort_gettupleslot_from_worker(tuplesortstate, ScanDirectionIsForward(dir), slot)) {
-//			ereport(LOG,(errmsg("nodeSort - try cleaning")));
-//			HOLD_INTERRUPTS();
-//			SpinLockAcquire(&workersList->mutex);
-//			foreach(lc, workersList->list) {
-//				worker = (Worker *) lfirst(lc);
-//				HOLD_INTERRUPTS();
-//				SpinLockAcquire(&worker->mutex);
-//				if (worker->valid && worker->state == PRL_WORKER_STATE_FINISHED_ACK && worker->work->jobId == jobId) {
-//					worker->state = PRL_WORKER_STATE_END;
-//					ereport(LOG,(errmsg("nodeSort - performing one bufferqueue cleaning")));
-//					destroyBufferQueue(worker->work->workParams->bufferQueue);
-//				}
-//				SpinLockRelease(&worker->mutex);
-//				RESUME_INTERRUPTS();
-//			}
-//			SpinLockRelease(&workersList->mutex);
-//			RESUME_INTERRUPTS();
-//			ereport(LOG,(errmsg("nodeSort - finished cleaning")));
-//			printGetUsage();
 		}
 	} else {
-		if (lts) {
-			tuplesort_gettupleslot_from_multiple_lts(tuplesortstate, ScanDirectionIsForward(dir), slot);
-		} else {
-			(void) tuplesort_gettupleslot(tuplesortstate,
-					ScanDirectionIsForward(dir), slot);	
-		}
+		(void) tuplesort_gettupleslot(tuplesortstate,
+				ScanDirectionIsForward(dir), slot);
 	}
 	
 	currctx = CurrentMemoryContext;
@@ -456,7 +354,10 @@ void
 ExecEndSort(SortState *node)
 {
 	bool prl_on = false;
+	bool lastValue = false;
+	int workersCnt = 0;
 	Worker * worker;
+	BufferQueueCell * bqc;
 	ListCell * lc;
 	long int jobId = 0;
 	SO1_printf("ExecEndSort: %s\n",
@@ -468,31 +369,84 @@ ExecEndSort(SortState *node)
 	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 	/* must drop pointer to sort result tuple */
 	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
-
+	
 	/*
 	 * Release tuplesort resources
 	 */
 	if (node->tuplesortstate != NULL) {
 		prl_on = tuplesort_is_parallel(node->tuplesortstate);
+		
 		if (prl_on) {
 			jobId = tuplesort_get_workersId(node->tuplesortstate);
+			workersCnt = tuplesort_get_prl_level(node->tuplesortstate);
 			ereport(LOG,(errmsg("nodeSort - try cleaning")));
 			HOLD_INTERRUPTS();
 			SpinLockAcquire(&workersList->mutex);
 			foreach(lc, workersList->list) {
 				worker = (Worker *) lfirst(lc);
-				HOLD_INTERRUPTS();
 				SpinLockAcquire(&worker->mutex);
 				if (worker->valid && worker->state == PRL_WORKER_STATE_FINISHED_ACK && worker->work->jobId == jobId) {
 					worker->state = PRL_WORKER_STATE_END;
-					ereport(LOG,(errmsg("nodeSort - performing one bufferqueue cleaning")));
-					destroyBufferQueue(worker->work->workParams->bufferQueue);
+					lastValue = bufferQueueSetStop(worker->work->workParams->bufferQueue, true);
+					if (!lastValue) {
+						ereport(LOG,(errmsg("nodeSort - clearing one value from queue so worker can notice stop")));
+						// clear at least one value, so they have a chance to notice the end
+						// sended did not send all tuples ...
+						// he might be stuck on semaphore
+						// clean bufferqueue
+						// it cant be empty because last one was not put inside
+						// well theoretically it can be .. we would have to get here before we took last one from queue and the worker could not
+						// insert next one ...
+						bqc = bufferQueueGet(worker->work->workParams->bufferQueue);
+						if (bqc->last) {
+							pfree(bqc);
+						} else {
+							pfree(((MinimalTuple *)((PrlSortTuple *)bqc->ptr_value)->tuple));
+							pfree((PrlSortTuple *)bqc->ptr_value);
+							pfree(bqc);
+						}
+					}
 				}
 				SpinLockRelease(&worker->mutex);
-				RESUME_INTERRUPTS();
 			}
 			SpinLockRelease(&workersList->mutex);
 			RESUME_INTERRUPTS();
+			
+			// pockam nez si to vsimnu
+			waitForWorkers(jobId,workersCnt,PRL_WORKER_STATE_END_ACK);
+			
+			HOLD_INTERRUPTS();
+			SpinLockAcquire(&workersList->mutex);
+			foreach(lc, workersList->list) {
+				worker = (Worker *) lfirst(lc);
+				SpinLockAcquire(&worker->mutex);
+				if (worker->valid && worker->state == PRL_WORKER_STATE_END_ACK && worker->work->jobId == jobId) {
+					ereport(LOG,(errmsg("nodeSort - performing one bufferqueue cleaning")));
+					bqc = bufferQueueGetNoSem(worker->work->workParams->bufferQueue);
+					while (bqc != NULL) {
+						if (bqc->last) {
+							pfree(bqc);
+						} else {
+							pfree(((MinimalTuple *)((PrlSortTuple *)bqc->ptr_value)->tuple));
+							pfree((PrlSortTuple *)bqc->ptr_value);
+							pfree(bqc);
+						}
+						bqc = bufferQueueGetNoSem(worker->work->workParams->bufferQueue);
+					}
+					destroyBufferQueue(worker->work->workParams->bufferQueue);
+					
+				}
+				SpinLockRelease(&worker->mutex);
+				/*TODO - add correct removal of shared worker structures
+				 * spinlock destroy ...
+				shListRemove(prlJobsList, worker->work);
+				shListRemove(worker->work->workParams->workersList, worker);
+				pfree(worker);
+				*/
+			}
+			SpinLockRelease(&workersList->mutex);
+			RESUME_INTERRUPTS();
+			
 			ereport(LOG,(errmsg("nodeSort - finished cleaning")));
 			printGetUsage();
 		}
