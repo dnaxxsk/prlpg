@@ -26,7 +26,8 @@ typedef enum {
 	PRL_WORKER_STATE_PARTIAL_READY, // konzument spracoval vysledky
 	PRL_WORKER_STATE_FINISHED, // worker uz dopracoval
 	PRL_WORKER_STATE_FINISHED_ACK, // master/konzument si vsimol ze worker uz dopracoval
-	PRL_WORKER_STATE_END	// mastrom nastaveny stav na ukoncenie workerovho procesu
+	PRL_WORKER_STATE_END,	// mastrom nastaveny stav na ukoncenie workerovho procesu
+	PRL_WORKER_STATE_END_ACK // worker odsuhlasil ukoncenie, potvrdil END
 } PRL_WORKER_STATE;
 
 typedef enum {
@@ -120,7 +121,7 @@ typedef struct BufferQueue
 	struct SEM_BOX * spaces;
 	struct SEM_BOX * mutex;
 	int init_size;
-	
+	bool stop;
 } BufferQueue;
 
 struct BufferQueueCell
@@ -132,8 +133,10 @@ struct BufferQueueCell
 
 extern BufferQueue * createBufferQueue(int buffer_size);
 extern void destroyBufferQueue(BufferQueue * bq);
-extern void bufferQueueAdd(BufferQueue * bq, BufferQueueCell * cell);
+extern bool bufferQueueAdd(BufferQueue * bq, BufferQueueCell * cell, bool stopOnLast);
 extern BufferQueueCell * bufferQueueGet(BufferQueue * bq);
+extern BufferQueueCell * bufferQueueGetNoSem(BufferQueue * bq);
+extern bool bufferQueueSetStop(BufferQueue * bq, bool newStop);
 
 typedef struct SEM_BOX {
 	SHM_QUEUE	links;

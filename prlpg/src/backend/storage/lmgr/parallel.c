@@ -91,6 +91,7 @@ BufferQueue * createBufferQueue(int buffer_size) {
 	ereport(DEBUG1,(errmsg("Parallel.c - create buffer queue - start")));
 	bq = (BufferQueue *)palloc(sizeof(BufferQueue));
 	bq->init_size = buffer_size;
+	bq->stop = false;
 
 	SpinLockAcquire(PrlSemLock);
 
@@ -177,7 +178,7 @@ void destroyBufferQueue(BufferQueue * bq) {
 
 	SpinLockRelease(PrlSemLock);
 	
-	if (bq->head != NULL || bq->tail != NULL) {
+	if (bq->head != NULL ) {
 		// problem
 		ereport(WARNING, (errcode(ERRCODE_OUT_OF_MEMORY),	errmsg("bufferqueue must be empty in destroy method")));
 	}
@@ -185,8 +186,9 @@ void destroyBufferQueue(BufferQueue * bq) {
 	pfree(bq);
 }
 
-void bufferQueueAdd(BufferQueue * bq, BufferQueueCell * cell) {
+bool bufferQueueAdd(BufferQueue * bq, BufferQueueCell * cell, bool stopOnLast) {
 	struct timeval tv;
+	bool result;
 	gettimeofday(&tv, NULL);
 	long int duration_u = tv.tv_usec;
 	long int duration_s = tv.tv_sec;
@@ -211,6 +213,10 @@ void bufferQueueAdd(BufferQueue * bq, BufferQueueCell * cell) {
 		bq->tail = cell;
 		cell->next = NULL;
 	}
+	if (stopOnLast && cell->last) {
+		bq->stop = true;
+	}
+	result = bq->stop;
 	PGSemaphoreUnlock(&(bq->mutex->sem));
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue add - mutex unlocked")));
 	PGSemaphoreUnlock(&(bq->items->sem));
@@ -218,6 +224,7 @@ void bufferQueueAdd(BufferQueue * bq, BufferQueueCell * cell) {
 	duration_s = tv.tv_sec - duration_s;
 	duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
 	addDuration += duration_u;
+	return result;
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue add - items upped and end")));
 }
 
@@ -270,6 +277,20 @@ BufferQueueCell * bufferQueueGet(BufferQueue * bq) {
 	duration_s = tv.tv_sec - duration_s;
 	duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
 	getDuration += duration_u;
+	return result;
+}
+
+/**
+ * Use this only when cleaning and you are sure that no one else can use this
+ * cant pfree here because dont know anything about data it is carrying.
+ */
+BufferQueueCell * bufferQueueGetNoSem(BufferQueue * bq) {
+	BufferQueueCell * result= NULL;
+	if (bq->head == NULL) {
+		return NULL;
+	}
+	result = bq->head;
+	bq->head = result->next;
 	return result;
 }
 
@@ -370,4 +391,13 @@ int stateTransition(long int jobId, PRL_WORKER_STATE oldState,
 	return counter;
 }
 
+bool bufferQueueSetStop(BufferQueue * bq, bool newStop) {
+	bool result = false;
+	PGSemaphoreLock(&(bq->mutex->sem), true);
+	result = bq->stop;
+	bq->stop = newStop;
+	
+	PGSemaphoreUnlock(&(bq->mutex->sem));
+	return result;
+}
 

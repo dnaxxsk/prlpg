@@ -173,6 +173,7 @@ int slaveBackendMain(WorkDef * work) {
 		HOLD_INTERRUPTS();
 		SpinLockAcquire(&worker->mutex);
 		if (worker->state == PRL_WORKER_STATE_END) {
+			worker->state = PRL_WORKER_STATE_END_ACK;
 			SpinLockRelease(&worker->mutex);
 			RESUME_INTERRUPTS();
 			break;
@@ -185,9 +186,9 @@ int slaveBackendMain(WorkDef * work) {
 	ereport(LOG,(errmsg("Worker: THE END")));
 	
 	// remove me from masters list 
-	shListRemove(worker->work->workParams->workersList, worker);
-	pfree(worker);
-	shListRemove(prlJobsList, work);
+	//shListRemove(worker->work->workParams->workersList, worker);
+	//pfree(worker);
+	//shListRemove(prlJobsList, work);
 	return 0;
 }
 
@@ -265,11 +266,15 @@ static void doSort(WorkDef * work, Worker * worker) {
 		if (prl_tuplesort_getsorttuple(tuplesortstate, pars->forward, pstup)) {
 			bqc->last = false;
 			bqc->ptr_value = (void *)pstup;
-			bufferQueueAdd(work->workParams->bufferQueue, bqc);
+			if (bufferQueueAdd(work->workParams->bufferQueue, bqc, true)) {
+				// in LIMIT CLAUSE the receiver will not want more at some point
+				ereport(LOG,(errmsg("Worker-doSort - noticed that master does not want more tuples.")));
+				break;
+			}
 		} else {
 			bqc->last = true;
 			pfree(pstup);
-			bufferQueueAdd(work->workParams->bufferQueue, bqc);
+			bufferQueueAdd(work->workParams->bufferQueue, bqc, true);
 			// leave the never ending cycle after sending last tuple
 			break;
 		}
