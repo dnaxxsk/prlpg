@@ -40,17 +40,7 @@ static long int getDuration = 0;
  * Inicializacia volana v postmastri este pred vytvorenim akehokolvek backendu
  */
 void parallel_init(void) {
-	//MemoryContext oldContext;
-	//WorkDef * work;
-	//oldContext = MemoryContextSwitchTo(ShmParalellContext);
-	//work = (WorkDef*)palloc(sizeof(WorkDef));
-	//work->state = -1;
-
 	prlJobsList = createShList();
-	// add first dummy because otherwise it would be NIL
-	//shListAppend(prlJobsList, work);
-
-	//MemoryContextSwitchTo(oldContext);
 }
 
 SharedList * createShList(void) {
@@ -365,6 +355,69 @@ bool waitForWorkers(long int jobId, int workersCnt, PRL_WORKER_STATE state) {
 		pg_usleep(100000L);
 	}
 	return true;
+}
+
+bool waitForAllWorkers(PRL_WORKER_STATE state) {
+	ListCell * lc;
+	Worker * worker;
+	bool notEnd = true;
+	while (notEnd) {
+		notEnd = false;
+		SpinLockAcquire(&workersList->mutex);
+		foreach(lc, workersList->list) {
+			worker = (Worker *) lfirst(lc);
+			HOLD_INTERRUPTS();
+			SpinLockAcquire(&worker->mutex);
+			if (worker->valid && worker->state != state) {
+				notEnd = true;
+			}
+			SpinLockRelease(&worker->mutex);
+			RESUME_INTERRUPTS();
+
+		}
+		SpinLockRelease(&workersList->mutex);
+	}
+	return true;
+}
+
+void cancelWorkers() {
+	ListCell * lc;
+	Worker * worker;
+	SpinLockAcquire(&workersList->mutex);
+	foreach(lc, workersList->list) {
+		worker = (Worker *) lfirst(lc);
+		HOLD_INTERRUPTS();
+		SpinLockAcquire(&worker->mutex);
+		signal_child(&worker->workerPid, SIGINT);
+		SpinLockRelease(&worker->mutex);
+		RESUME_INTERRUPTS();
+
+	}
+	SpinLockRelease(&workersList->mutex);
+}
+
+/**
+ * copied from postmaster.c
+ */
+void
+signal_child(pid_t pid, int signal)
+{
+	if (kill(pid, signal) < 0)
+		elog(DEBUG3, "kill(%ld,%d) failed: %m", (long) pid, signal);
+#ifdef HAVE_SETSID
+	switch (signal)
+	{
+		case SIGINT:
+		case SIGTERM:
+		case SIGQUIT:
+		case SIGSTOP:
+			if (kill(-pid, signal) < 0)
+				elog(DEBUG3, "kill(%ld,%d) failed: %m", (long) (-pid), signal);
+			break;
+		default:
+			break;
+	}
+#endif
 }
 
 // returns number of workers which changed the state

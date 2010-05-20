@@ -27,12 +27,13 @@ typedef enum {
 	PRL_WORKER_STATE_FINISHED, // worker uz dopracoval
 	PRL_WORKER_STATE_FINISHED_ACK, // master/konzument si vsimol ze worker uz dopracoval
 	PRL_WORKER_STATE_END,	// mastrom nastaveny stav na ukoncenie workerovho procesu
-	PRL_WORKER_STATE_END_ACK // worker odsuhlasil ukoncenie, potvrdil END
+	PRL_WORKER_STATE_END_ACK, // worker odsuhlasil ukoncenie, potvrdil END
+	PRL_WORKER_STATE_CANCELED // 
 } PRL_WORKER_STATE;
 
 typedef enum {
-	PRL_WORK_TYPE_SORT, // sort
-	PRL_WORK_TYPE_SORT_MULTIPLE_LTS // sort but by using multiple logical tape sets instead of std producer consumer scenario
+	PRL_WORK_TYPE_SORT // sort
+	//PRL_WORK_TYPE_SORT_MULTIPLE_LTS // sort but by using multiple logical tape sets instead of std producer consumer scenario
 } PRL_WORK_TYPE;
 
 //typedef struct SharedList SharedList;
@@ -165,6 +166,9 @@ extern Size PrlGlobalShmemSize(void);
 
 // returns true when requested number of workers is defined state
 extern bool waitForWorkers(long int jobId, int workersCnt, PRL_WORKER_STATE state);
+
+extern bool waitForAllWorkers(PRL_WORKER_STATE state);
+extern void cancelWorkers();
 
 // returns number of workers which changed the state
 extern int stateTransition(long int jobId, PRL_WORKER_STATE oldState, PRL_WORKER_STATE newState);
