@@ -60,6 +60,7 @@
 #include "rewrite/rewriteHandler.h"
 #include "storage/bufmgr.h"
 #include "storage/ipc.h"
+#include "storage/parallel.h"
 #include "storage/proc.h"
 #include "storage/procsignal.h"
 #include "storage/sinval.h"
@@ -3685,7 +3686,11 @@ PostgresMain(int argc, char *argv[], const char *username)
 
 		/* Prevent interrupts while cleaning up */
 		HOLD_INTERRUPTS();
-
+		
+		/* Signal workers to cancel as well */
+		cancelWorkers();
+		waitForAllWorkers(PRL_WORKER_STATE_CANCELED);
+		
 		/*
 		 * Forget any pending QueryCancel request, since we're returning to
 		 * the idle loop anyway, and cancel the statement timer if running.

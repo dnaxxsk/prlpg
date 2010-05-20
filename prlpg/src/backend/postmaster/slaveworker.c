@@ -55,6 +55,7 @@ int slaveBackendMain(WorkDef * work) {
 	MemoryContext oldContext;
 	Worker * worker;
 	char	   *dbname;
+	sigjmp_buf	local_sigjmp_buf;
 	
 	// wait one minute so i can attach if i want to ..
 	//pg_usleep(60*1000000L);
@@ -140,6 +141,73 @@ int slaveBackendMain(WorkDef * work) {
 	// switch right here so we can init work in our local memory
 	MemoryContextSwitchTo(oldContext);
 	
+	// here process errors and cancel query of master too
+	if (sigsetjmp(local_sigjmp_buf, 1) != 0) {
+		error_context_stack = NULL;
+
+		/* Prevent interrupts while cleaning up */
+		HOLD_INTERRUPTS();
+		
+		SpinLockAcquire(&worker->mutex);
+		worker->state = PRL_WORKER_STATE_CANCELED;
+		SpinLockRelease(&worker->mutex);
+
+		/*
+		 * Forget any pending QueryCancel request, since we're returning to
+		 * the idle loop anyway, and cancel the statement timer if running.
+		 */
+		QueryCancelPending = false;
+		disable_sig_alarm(true);
+		QueryCancelPending = false; /* again in case timeout occurred */
+
+		/*
+		 * Turn off these interrupts too.  This is only needed here and not in
+		 * other exception-catching places since these interrupts are only
+		 * enabled while we wait for client input.
+		 */
+		DisableCatchupInterrupt();
+
+		/* Report the error to the client and/or server log */
+		EmitErrorReport();
+
+		/*
+		 * Make sure debug_query_string gets reset before we possibly clobber
+		 * the storage it points at.
+		 */
+		debug_query_string = NULL;
+
+		/*
+		 * Abort the current transaction in order to recover.
+		 */
+		AbortCurrentTransaction();
+
+		/*
+		 * Now return to normal top-level context and clear ErrorContext for
+		 * next time.
+		 */
+		MemoryContextSwitchTo(TopMemoryContext);
+		FlushErrorState();
+
+		/*
+		 * Dont know if i need this in worker
+		 * 
+		 * If we were handling an extended-query-protocol message, initiate
+		 * skip till next Sync.  This also causes us not to issue
+		 * ReadyForQuery (until we get Sync).
+		 *
+		if (doing_extended_query_message)
+			ignore_till_sync = true;
+
+		* We don't have a transaction command open anymore *
+		xact_started = false;*/
+
+		/* Now we can allow interrupts again */
+		RESUME_INTERRUPTS();
+		
+		// sofar we dont reuse workers
+		return 0;
+	}
+	
 	while (true) {
 		HOLD_INTERRUPTS();
 		SpinLockAcquire(&worker->mutex);
@@ -155,9 +223,7 @@ int slaveBackendMain(WorkDef * work) {
 				ereport(LOG,(errmsg("Worker: Job = SORT - work done")));
 				CommitTransactionCommand();
 				ereport(LOG,(errmsg("Worker: Job = SORT - transaction commited")));
-			} else if (work->workType == PRL_WORK_TYPE_SORT_MULTIPLE_LTS) {
-				// here do it with lts
-			}
+			} 
 			
 			break;
 		} else {
@@ -276,6 +342,7 @@ static void doSort(WorkDef * work, Worker * worker) {
 			pfree(pstup);
 			bufferQueueAdd(work->workParams->bufferQueue, bqc, true);
 			// leave the never ending cycle after sending last tuple
+			ereport(LOG,(errmsg("Worker-doSort - NOT noticed .. sending last one")));
 			break;
 		}
 	}
