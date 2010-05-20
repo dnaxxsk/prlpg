@@ -377,6 +377,8 @@ ExecEndSort(SortState *node)
 		prl_on = tuplesort_is_parallel(node->tuplesortstate);
 		
 		if (prl_on) {
+			//ereport(LOG,(errmsg("nodeSort - try cleaning - before sleeping - letting time to workers to fill their buffers")));
+			//pg_usleep(2000000L);
 			jobId = tuplesort_get_workersId(node->tuplesortstate);
 			workersCnt = tuplesort_get_prl_level(node->tuplesortstate);
 			ereport(LOG,(errmsg("nodeSort - try cleaning")));
