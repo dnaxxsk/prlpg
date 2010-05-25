@@ -168,6 +168,8 @@ extern Size PrlGlobalShmemSize(void);
 extern bool waitForWorkers(long int jobId, int workersCnt, PRL_WORKER_STATE state);
 
 extern bool waitForAllWorkers(PRL_WORKER_STATE state);
+extern void waitForState(Worker * worker, PRL_WORKER_STATE state);
+extern void waitForAndSet(Worker * worker, PRL_WORKER_STATE state, PRL_WORKER_STATE newState);
 extern void cancelWorkers();
 
 // returns number of workers which changed the state

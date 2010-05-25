@@ -219,6 +219,12 @@ ExecSort(SortState *node)
 				distributeToWorker(tuplesortstate, slot, false);
 			}
 			
+			if (InterruptHoldoffCount > 0) {
+				ereport(LOG,(errmsg("Master - Signals blocked.")));
+			} else {
+				ereport(LOG,(errmsg("Master - Signals OK.")));
+			}
+			
 			printAddUsage();
 			
 			ereport(LOG,(errmsg("nodeSort - waiting until workers finish the job.")));
@@ -245,6 +251,8 @@ ExecSort(SortState *node)
 			node->bounded_Done = node->bounded;
 			node->bound_Done = node->bound;
 			SO1_printf("ExecSort: %s\n", "sorting done");
+			int mmask = siggetmask();
+			ereport(LOG,(errmsg("Worker mask is %d, %d, %d", mmask)));
 		}
 	}
 		
@@ -252,7 +260,11 @@ ExecSort(SortState *node)
 			   "retrieving tuple from tuplesort");
 
 	prl_on = tuplesort_is_parallel(tuplesortstate);
-		
+	if (InterruptHoldoffCount > 0) {
+		ereport(LOG,(errmsg("Master - Signals blocked.")));
+	} else {
+		ereport(LOG,(errmsg("Master - Signals OK.")));
+	}
 	/*
 	 * Get the first or next tuple from tuplesort. Returns NULL if no more
 	 * tuples.
@@ -362,7 +374,7 @@ ExecEndSort(SortState *node)
 	long int jobId = 0;
 	SO1_printf("ExecEndSort: %s\n",
 			   "shutting down sort node");
-
+	ereport(LOG,(errmsg("nodeSort - ExecEndSort")));
 	/*
 	 * clean out the tuple table
 	 */

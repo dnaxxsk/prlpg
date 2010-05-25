@@ -2691,6 +2691,8 @@ StatementCancelHandler(SIGNAL_ARGS)
 {
 	int			save_errno = errno;
 
+	ereport(LOG,(errmsg("Master: Statement cancel handler")));
+	
 	/*
 	 * Don't joggle the elbow of proc_exit
 	 */
@@ -3688,8 +3690,12 @@ PostgresMain(int argc, char *argv[], const char *username)
 		HOLD_INTERRUPTS();
 		
 		/* Signal workers to cancel as well */
-		cancelWorkers();
-		waitForAllWorkers(PRL_WORKER_STATE_CANCELED);
+		if (workersList != NULL) {
+			cancelWorkers();
+			waitForAllWorkers(PRL_WORKER_STATE_CANCELED);
+			// do cleanup after workers
+		}
+		
 		
 		/*
 		 * Forget any pending QueryCancel request, since we're returning to
