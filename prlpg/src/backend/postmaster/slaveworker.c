@@ -51,6 +51,46 @@ bool isSlaveWorker(void) {
 	return am_slave_worker;
 }
 
+/*
+ * Query-cancel signal from postmaster: abort current transaction
+ * at soonest convenient time
+ */
+void
+WorkerStatementCancelHandler(SIGNAL_ARGS)
+{
+	int			save_errno = errno;
+	ereport(LOG,(errmsg("Worker: Statement cancel")));
+
+	/*
+	 * Don't joggle the elbow of proc_exit
+	 */
+	if (!proc_exit_inprogress)
+	{
+		InterruptPending = true;
+		QueryCancelPending = true;
+
+		/*
+		 * If it's safe to interrupt, and we're waiting for input or a lock,
+		 * service the interrupt immediately
+		 */
+		if (ImmediateInterruptOK && InterruptHoldoffCount == 0 &&
+			CritSectionCount == 0)
+		{
+			/* bump holdoff count to make ProcessInterrupts() a no-op */
+			/* until we are done getting ready for it */
+			InterruptHoldoffCount++;
+			LockWaitCancel();	/* prevent CheckDeadLock from running */
+			DisableNotifyInterrupt();
+			DisableCatchupInterrupt();
+			InterruptHoldoffCount--;
+			ProcessInterrupts();
+		}
+	}
+
+	errno = save_errno;
+}
+
+
 int slaveBackendMain(WorkDef * work) {
 	MemoryContext oldContext;
 	Worker * worker;
@@ -70,7 +110,7 @@ int slaveBackendMain(WorkDef * work) {
 	//TODO - stack_base_ptr?
 	
 	pqsignal(SIGHUP, SigHupHandler);	/* set flag to read config file */
-	pqsignal(SIGINT, StatementCancelHandler);	/* cancel current query */
+	pqsignal(SIGINT, WorkerStatementCancelHandler);	/* cancel current query */
 	pqsignal(SIGTERM, die);		/* cancel current query and exit */
 	ereport(LOG,(errmsg("Worker: Initializing - step 3")));
 	/*
@@ -109,7 +149,11 @@ int slaveBackendMain(WorkDef * work) {
 	InitProcess();
 	ereport(LOG,(errmsg("Worker: Initializing - step 8")));
 	// po Inite uz mam pgproc so semaforom kde mozem cakat na pracu ...
-	
+	// neprijimalo to SIGINT ked ho canceloval master
+	sigaddset(&UnBlockSig, SIGINT);
+	PG_SETMASK(&UnBlockSig);
+	int mmask = siggetmask();
+	ereport(LOG,(errmsg("Worker mask is %d, %d, %d", mmask,BlockSig, UnBlockSig)));
 	//here I should get masters dbname and username
 	//ereport(DEBUG3,(errmsg_internal("InitPostgres")));
 	InitPostgres(NULL, work->workParams->databaseId, work->workParams->username, &dbname);
@@ -136,13 +180,13 @@ int slaveBackendMain(WorkDef * work) {
 	ereport(LOG,(errmsg("Worker: Initialized")));
 	
 	shListAppend(work->workParams->workersList, worker);
-	//SpinLockRelease(&worker->mutex);
 	
 	// switch right here so we can init work in our local memory
 	MemoryContextSwitchTo(oldContext);
 	
 	// here process errors and cancel query of master too
 	if (sigsetjmp(local_sigjmp_buf, 1) != 0) {
+		ereport(LOG,(errmsg("Worker - after error jump cleanup.")));
 		error_context_stack = NULL;
 
 		/* Prevent interrupts while cleaning up */
@@ -207,48 +251,26 @@ int slaveBackendMain(WorkDef * work) {
 		// sofar we dont reuse workers
 		return 0;
 	}
-	
-	while (true) {
-		HOLD_INTERRUPTS();
-		SpinLockAcquire(&worker->mutex);
-		if (worker->state == PRL_WORKER_STATE_READY) {
-			SpinLockRelease(&worker->mutex);
-			RESUME_INTERRUPTS();
-			
-			if (work->workType == PRL_WORK_TYPE_SORT) {
-				ereport(LOG,(errmsg("Worker: Job = SORT")));
-				StartTransactionCommand();
-				ereport(LOG,(errmsg("Worker: Job = SORT - transaction started")));
-				doSort(work, worker);
-				ereport(LOG,(errmsg("Worker: Job = SORT - work done")));
-				CommitTransactionCommand();
-				ereport(LOG,(errmsg("Worker: Job = SORT - transaction commited")));
-			} 
-			
-			break;
-		} else {
-			SpinLockRelease(&worker->mutex);
-			RESUME_INTERRUPTS();
-		}
-		
-		pg_usleep(100000L);
+	if (InterruptHoldoffCount > 0) {
+		ereport(LOG,(errmsg("Signals blocked.")));
 	}
+	
+	waitForState(worker, PRL_WORKER_STATE_READY);
+		
+	if (work->workType == PRL_WORK_TYPE_SORT) {
+		ereport(LOG,(errmsg("Worker: Job = SORT")));
+		StartTransactionCommand();
+		ereport(LOG,(errmsg("Worker: Job = SORT - transaction started")));
+		doSort(work, worker);
+		ereport(LOG,(errmsg("Worker: Job = SORT - work done")));
+		CommitTransactionCommand();
+		ereport(LOG,(errmsg("Worker: Job = SORT - transaction commited")));
+	} 
 	
 	ereport(LOG,(errmsg("Worker: wait till the end")));
-	while (true) {
-		HOLD_INTERRUPTS();
-		SpinLockAcquire(&worker->mutex);
-		if (worker->state == PRL_WORKER_STATE_END) {
-			worker->state = PRL_WORKER_STATE_END_ACK;
-			SpinLockRelease(&worker->mutex);
-			RESUME_INTERRUPTS();
-			break;
-		} else {
-			SpinLockRelease(&worker->mutex);
-			RESUME_INTERRUPTS();
-		}
-		pg_usleep(100000L);
-	}
+	
+	waitForAndSet(worker, PRL_WORKER_STATE_END, PRL_WORKER_STATE_END_ACK);
+	
 	ereport(LOG,(errmsg("Worker: THE END")));
 	
 	// remove me from masters list 
@@ -300,29 +322,24 @@ static void doSort(WorkDef * work, Worker * worker) {
 	// here send them all back - well better would be to send them as one final run so the master can perform the final merge on its own
 	// and reuse these workers for another job 
 	ereport(LOG,(errmsg("Worker-doSort: after performsort")));
+	
+	pg_usleep(30 * 1000000L);
+	ereport(LOG,(errmsg("Worker-doSort: after performsort - after sleep")));
+	if (InterruptHoldoffCount > 0) {
+		ereport(LOG,(errmsg("Worker - Signals blocked.")));
+	} else {
+		ereport(LOG,(errmsg("Worker - Signals OK.")));
+	}
+	
 	// tell the master that we have finished
-	HOLD_INTERRUPTS();
 	SpinLockAcquire(&worker->mutex);
 	worker->state = PRL_WORKER_STATE_FINISHED;
 	// TODO - remove dummy
 	work->workResult->dummyResult1 = work->workParams->dummyValue1*2;
 	SpinLockRelease(&worker->mutex);
-	RESUME_INTERRUPTS();
 	ereport(LOG,(errmsg("Worker-doSort: set state to FINISHED")));
 	// wait for ACK by master (master waits for all slaves to return results)
-	while (true) {
-		HOLD_INTERRUPTS();
-		SpinLockAcquire(&worker->mutex);
-		if (worker->state == PRL_WORKER_STATE_FINISHED_ACK) {
-			SpinLockRelease(&worker->mutex);
-			RESUME_INTERRUPTS();
-			break;
-		} else {
-			SpinLockRelease(&worker->mutex);
-			RESUME_INTERRUPTS();
-		}
-		pg_usleep(100000L);
-	}
+	waitForState(worker, PRL_WORKER_STATE_FINISHED_ACK);
 	
 	ereport(LOG,(errmsg("Worker-doSort: now in state FINISHED_ACK, starting to send tuples back to master")));
 	oldContext = MemoryContextSwitchTo(ShmParalellContext);

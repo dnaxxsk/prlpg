@@ -179,13 +179,13 @@ void destroyBufferQueue(BufferQueue * bq) {
 bool bufferQueueAdd(BufferQueue * bq, BufferQueueCell * cell, bool stopOnLast) {
 	struct timeval tv;
 	bool result;
-	gettimeofday(&tv, NULL);
 	long int duration_u = tv.tv_usec;
 	long int duration_s = tv.tv_sec;
+	gettimeofday(&tv, NULL);
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue add - start")));
-	PGSemaphoreLock(&(bq->spaces->sem), false);
+	PGSemaphoreLock(&(bq->spaces->sem), true);
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue - spaces downed")));
-	PGSemaphoreLock(&(bq->mutex->sem), false);
+	PGSemaphoreLock(&(bq->mutex->sem), true);
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue - mutex locked")));
 	if (bq->tail == NULL) {
 //		ereport(DEBUG1,(errmsg("Parallel.c - buffer queue add - was empty")));
@@ -235,9 +235,9 @@ BufferQueueCell * bufferQueueGet(BufferQueue * bq) {
 	long int duration_s = tv.tv_sec;
 	BufferQueueCell * result= NULL;
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - start")));
-	PGSemaphoreLock(&(bq->items->sem), false);
+	PGSemaphoreLock(&(bq->items->sem), true);
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - items downed")));
-	PGSemaphoreLock(&(bq->mutex->sem), false);
+	PGSemaphoreLock(&(bq->mutex->sem), true);
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - mutex locked")));
 
 	if (bq->head == NULL) {
@@ -342,17 +342,15 @@ bool waitForWorkers(long int jobId, int workersCnt, PRL_WORKER_STATE state) {
 		SpinLockAcquire(&workersList->mutex);
 		foreach(lc, workersList->list) {
 			worker = (Worker *) lfirst(lc);
-			HOLD_INTERRUPTS();
 			SpinLockAcquire(&worker->mutex);
 			if (worker->valid && worker->state == state && worker->work->jobId == jobId) {
 				++readyCnt;
 			}
 			SpinLockRelease(&worker->mutex);
-			RESUME_INTERRUPTS();
-
 		}
 		SpinLockRelease(&workersList->mutex);
 		pg_usleep(100000L);
+		CHECK_FOR_INTERRUPTS();
 	}
 	return true;
 }
@@ -361,39 +359,40 @@ bool waitForAllWorkers(PRL_WORKER_STATE state) {
 	ListCell * lc;
 	Worker * worker;
 	bool notEnd = true;
+	ereport(LOG,(errmsg("Master: wait for all- start")));
 	while (notEnd) {
 		notEnd = false;
 		SpinLockAcquire(&workersList->mutex);
 		foreach(lc, workersList->list) {
 			worker = (Worker *) lfirst(lc);
-			HOLD_INTERRUPTS();
 			SpinLockAcquire(&worker->mutex);
-			if (worker->valid && worker->state != state) {
+			if (worker->valid && (worker->state != state && worker->state != PRL_WORKER_STATE_END_ACK)) {
 				notEnd = true;
 			}
 			SpinLockRelease(&worker->mutex);
-			RESUME_INTERRUPTS();
-
+			pg_usleep(100000);
 		}
 		SpinLockRelease(&workersList->mutex);
 	}
+	ereport(LOG,(errmsg("Master: wait for all- end")));
 	return true;
 }
 
 void cancelWorkers() {
 	ListCell * lc;
 	Worker * worker;
-	SpinLockAcquire(&workersList->mutex);
+	ereport(LOG,(errmsg("Master: cancel workers")));
+//	SpinLockAcquire(&workersList->mutex);
 	foreach(lc, workersList->list) {
 		worker = (Worker *) lfirst(lc);
-		HOLD_INTERRUPTS();
-		SpinLockAcquire(&worker->mutex);
+//		SpinLockAcquire(&worker->mutex);
 		signal_child(&worker->workerPid, SIGINT);
-		SpinLockRelease(&worker->mutex);
-		RESUME_INTERRUPTS();
-
+		ereport(LOG,(errmsg("Master: canceling pid ")));
+//		SpinLockRelease(&worker->mutex);
+		
 	}
-	SpinLockRelease(&workersList->mutex);
+//	SpinLockRelease(&workersList->mutex);
+	ereport(LOG,(errmsg("Master: cancel workers  - end")));
 }
 
 /**
@@ -443,6 +442,44 @@ int stateTransition(long int jobId, PRL_WORKER_STATE oldState,
 
 	return counter;
 }
+
+/**
+ * Returns true when achieved. Else 
+ */
+void waitForState(Worker * worker, PRL_WORKER_STATE state) {
+	while (true) {
+		SpinLockAcquire(&worker->mutex);
+		if (worker->state == state) {
+			SpinLockRelease(&worker->mutex);
+			break;
+		} else if (worker->state == PRL_WORKER_STATE_CANCELED) {
+			SpinLockRelease(&worker->mutex);
+			ereport(ERROR,(errmsg("Worker - state CANCELLED")));
+			break;
+		} else {
+			SpinLockRelease(&worker->mutex);
+		}
+		pg_usleep(100000L);
+	}
+}
+
+void waitForAndSet(Worker * worker, PRL_WORKER_STATE state, PRL_WORKER_STATE newState) {
+	while (true) {
+		SpinLockAcquire(&worker->mutex);
+		if (worker->state == state) {
+			worker->state = newState;
+			SpinLockRelease(&worker->mutex);
+			break;
+		} else if (worker->state == PRL_WORKER_STATE_CANCELED) {
+			SpinLockRelease(&worker->mutex);
+			ereport(ERROR,(errmsg("Worker - state CANCELLED")));
+			break;
+		} else {
+			SpinLockRelease(&worker->mutex);
+		}
+		pg_usleep(100000L);
+	}
+} 
 
 bool bufferQueueSetStop(BufferQueue * bq, bool newStop) {
 	bool result = false;
