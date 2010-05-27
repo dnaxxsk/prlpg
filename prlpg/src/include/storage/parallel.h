@@ -103,6 +103,7 @@ typedef struct SortParams {
 extern List * workDefList;
 extern SharedList * prlJobsList;
 extern SharedList * workersList;
+extern SharedList * workersToCancel;
 
 extern void parallel_init(void);
 
@@ -111,6 +112,7 @@ extern void parallel_init(void);
 extern SharedList * createShList(void);
 extern void shListAppend(SharedList * list, void * object);
 extern void shListRemove(SharedList * list, void * object);
+extern void shListAppendInt(SharedList * list, int value);
 
 typedef struct BufferQueueCell BufferQueueCell;
 

@@ -150,7 +150,7 @@ int slaveBackendMain(WorkDef * work) {
 	ereport(LOG,(errmsg("Worker: Initializing - step 8")));
 	// po Inite uz mam pgproc so semaforom kde mozem cakat na pracu ...
 	// neprijimalo to SIGINT ked ho canceloval master
-	sigaddset(&UnBlockSig, SIGINT);
+	//sigaddset(&UnBlockSig, SIGINT);
 	PG_SETMASK(&UnBlockSig);
 	int mmask = siggetmask();
 	ereport(LOG,(errmsg("Worker mask is %d, %d, %d", mmask,BlockSig, UnBlockSig)));

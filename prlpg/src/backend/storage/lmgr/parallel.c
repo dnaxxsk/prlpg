@@ -14,6 +14,7 @@
 #include "storage/parallel.h"
 #include "storage/procarray.h"
 #include "storage/spin.h"
+#include "storage/pmsignal.h"
 #include "utils/memutils.h"
 #include "storage/shmem.h"
 
@@ -25,6 +26,7 @@ int parallel_shared_queue_size = 5;
 
 // poziadavky na zalozenie novych workerov pre postmastra
 SharedList * prlJobsList;
+SharedList * workersToCancel;
 
 // zoznam workerov ktorych ma k dispozicii tento backend
 SharedList * workersList = NULL;
@@ -41,6 +43,7 @@ static long int getDuration = 0;
  */
 void parallel_init(void) {
 	prlJobsList = createShList();
+	workersToCancel = createShList();
 }
 
 SharedList * createShList(void) {
@@ -70,6 +73,17 @@ void shListRemove(SharedList * list, void * object) {
 	SpinLockAcquire(&list->mutex);
 	list->list = list_delete_ptr(list->list, object);
 	SpinLockRelease(&list->mutex);
+	RESUME_INTERRUPTS();
+}
+
+void shListAppendInt(SharedList * list, int value) {
+	MemoryContext oldContext;
+	oldContext = MemoryContextSwitchTo(ShmParalellContext);
+	HOLD_INTERRUPTS();
+	SpinLockAcquire(&list->mutex);
+	list->list = lappend_int(list->list, value);
+	SpinLockRelease(&list->mutex);
+	MemoryContextSwitchTo(oldContext);
 	RESUME_INTERRUPTS();
 }
 
@@ -382,16 +396,15 @@ void cancelWorkers() {
 	ListCell * lc;
 	Worker * worker;
 	ereport(LOG,(errmsg("Master: cancel workers")));
-//	SpinLockAcquire(&workersList->mutex);
+
 	foreach(lc, workersList->list) {
 		worker = (Worker *) lfirst(lc);
-//		SpinLockAcquire(&worker->mutex);
-		signal_child(&worker->workerPid, SIGINT);
+		//signal_child(&worker->workerPid, SIGINT);
 		ereport(LOG,(errmsg("Master: canceling pid ")));
-//		SpinLockRelease(&worker->mutex);
-		
+		shListAppendInt(workersToCancel, worker->workerPid);
 	}
-//	SpinLockRelease(&workersList->mutex);
+	
+	SendPostmasterSignal(PMSIGNAL_CANCEL_PARALLEL_WORKERS);
 	ereport(LOG,(errmsg("Master: cancel workers  - end")));
 }
 
