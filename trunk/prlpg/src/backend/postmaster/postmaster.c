@@ -298,6 +298,8 @@ bool		redirection_done = false;	/* stderr redirected for syslogger? */
 static volatile sig_atomic_t start_autovac_launcher = false;
 
 static volatile sig_atomic_t start_pg_workers = false;
+static volatile sig_atomic_t cancel_pg_workers = false;
+
 
 /* the launcher needs to be signalled to communicate some condition */
 static volatile bool		avlauncher_needs_signal = false;
@@ -374,6 +376,7 @@ static bool CreateOptsFile(int argc, char *argv[], char *fullprogname);
 static pid_t StartChildProcess(AuxProcType type);
 static void StartAutovacuumWorker(void);
 static void StartParallelWorkers(void);
+static void CancelParallelWorkers(void);
 static void forkSlave(WorkDef * work);
 
 #ifdef EXEC_BACKEND
@@ -1478,6 +1481,11 @@ ServerLoop(void)
 		if (start_pg_workers) {
 			StartParallelWorkers();
 			start_pg_workers = false;
+		}
+		
+		if (cancel_pg_workers) {
+			CancelParallelWorkers();
+			cancel_pg_workers = false;
 		}
 
 		/* If we need to signal the autovacuum launcher, do so now */
@@ -4180,6 +4188,14 @@ sigusr1_handler(SIGNAL_ARGS)
 	{
 		start_pg_workers = true;
 	}
+	
+	if (CheckPostmasterSignal(PMSIGNAL_CANCEL_PARALLEL_WORKERS)) 
+	{
+		ereport(LOG,(errmsg("Postmaster: cancel workers signal found")));
+		cancel_pg_workers = true;
+	} else {
+		ereport(LOG,(errmsg("Postmaster: cancel workers signal NOT found")));
+	}
 
 	PG_SETMASK(&UnBlockSig);
 
@@ -4205,6 +4221,25 @@ static void StartParallelWorkers(void) {
 		}
 		SpinLockRelease(&prlJobsList->mutex);
 	}
+}
+
+/**
+ *	Send signal to all pids registered in list. 
+ */
+static void CancelParallelWorkers(void) {
+	ListCell * lc;
+	pid_t workerPid;
+	SpinLockAcquire(&workersToCancel->mutex);
+		
+	foreach(lc, workersToCancel->list) {
+		workerPid = (pid_t) lfirst_int(lc);
+		signal_child(workerPid, SIGINT);
+		ereport(LOG,(errmsg("PostMaster: Signal children to cancel query. %d", workerPid)));
+	}
+	list_free(workersToCancel->list);
+	workersToCancel->list = NIL;
+	
+	SpinLockRelease(&workersToCancel->mutex);
 }
 
 static void forkSlave(WorkDef * work) {

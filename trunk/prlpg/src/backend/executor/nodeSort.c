@@ -148,6 +148,8 @@ ExecSort(SortState *node)
 			node->bound_Done = node->bound;
 			SO1_printf("ExecSort: %s\n", "sorting done");
 		} else {
+			int mmask = siggetmask();
+			ereport(LOG,(errmsg("Master mask is %d", mmask)));
 			tuplesort_set_prl_level(tuplesortstate, prl_level);
 			tuplesort_set_workersId(tuplesortstate, workersId);
 			node->tuplesortstate = (void *) tuplesortstate;
@@ -251,8 +253,8 @@ ExecSort(SortState *node)
 			node->bounded_Done = node->bounded;
 			node->bound_Done = node->bound;
 			SO1_printf("ExecSort: %s\n", "sorting done");
-			int mmask = siggetmask();
-			ereport(LOG,(errmsg("Worker mask is %d, %d, %d", mmask)));
+			mmask = siggetmask();
+			ereport(LOG,(errmsg("Master mask is %d", mmask)));
 		}
 	}
 		
