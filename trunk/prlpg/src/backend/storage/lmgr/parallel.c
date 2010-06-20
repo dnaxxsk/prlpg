@@ -22,7 +22,12 @@
 bool parallel_execution_allowed = false;
 bool parallel_sort_allowed = false;
 int parallel_sort_level = 2;
-int parallel_shared_queue_size = 5;
+int parallel_shared_queue_size = 1000;
+
+bool prl_sql = false;
+int prl_sql_lvl = 2;
+char * prl_sql_q1 = NULL;
+char * prl_sql_q2 = NULL;
 
 // poziadavky na zalozenie novych workerov pre postmastra
 SharedList * prlJobsList;
@@ -95,6 +100,7 @@ BufferQueue * createBufferQueue(int buffer_size) {
 	ereport(DEBUG1,(errmsg("Parallel.c - create buffer queue - start")));
 	bq = (BufferQueue *)palloc(sizeof(BufferQueue));
 	bq->init_size = buffer_size;
+	bq->size = 0;
 	bq->stop = false;
 
 	SpinLockAcquire(PrlSemLock);
@@ -200,6 +206,7 @@ bool bufferQueueAdd(BufferQueue * bq, BufferQueueCell * cell, bool stopOnLast) {
 	PGSemaphoreLock(&(bq->spaces->sem), true);
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue - spaces downed")));
 	PGSemaphoreLock(&(bq->mutex->sem), true);
+	bq->size++;
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue - mutex locked")));
 	if (bq->tail == NULL) {
 //		ereport(DEBUG1,(errmsg("Parallel.c - buffer queue add - was empty")));
@@ -272,7 +279,8 @@ BufferQueueCell * bufferQueueGet(BufferQueue * bq) {
 	} else {
 //		ereport(DEBUG1, (errmsg("Parallel.c - buffer queue get")));
 	}
-
+	bq->size--;
+	ereport(DEBUG_PRL1, (errmsg("Parallel.c - buffer queue get %d", bq->size)));
 	PGSemaphoreUnlock(&(bq->mutex->sem));
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - mutex unlocked")));
 	PGSemaphoreUnlock(&(bq->spaces->sem));
