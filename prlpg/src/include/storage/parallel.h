@@ -9,6 +9,11 @@ extern bool parallel_sort_allowed;
 extern int parallel_sort_level;
 extern int parallel_shared_queue_size;
 
+extern bool prl_sql;
+extern int prl_sql_lvl;
+extern char * prl_sql_q1;
+extern char * prl_sql_q2;
+
 typedef enum {
 	PRL_STATE_FAKE,
 	PRL_STATE_REQUESTED,
@@ -34,6 +39,7 @@ typedef enum {
 typedef enum {
 	PRL_WORK_TYPE_SORT // sort
 	//PRL_WORK_TYPE_SORT_MULTIPLE_LTS // sort but by using multiple logical tape sets instead of std producer consumer scenario
+	,PRL_WORK_TYPE_QUERY
 } PRL_WORK_TYPE;
 
 //typedef struct SharedList SharedList;
@@ -48,6 +54,7 @@ typedef struct WorkParams
 {
 	int dummyValue1;
 	struct SortParams * sortParams;
+	struct QueryParams * queryParams;
 	// zoznam mastera do ktoreho sa ma tento worker pridat
 	SharedList * workersList;
 	struct BufferQueue * bufferQueue;
@@ -99,6 +106,11 @@ typedef struct SortParams {
 	int64		bound;
 } SortParams;
 
+typedef struct QueryParams {
+	// exec simple query 
+	const char *query_string;
+} QueryParams;
+
 // allocated in shared memory
 extern List * workDefList;
 extern SharedList * prlJobsList;
@@ -124,6 +136,7 @@ typedef struct BufferQueue
 	struct SEM_BOX * spaces;
 	struct SEM_BOX * mutex;
 	int init_size;
+	int size;
 	bool stop;
 } BufferQueue;
 
