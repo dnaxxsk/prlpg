@@ -263,9 +263,9 @@ ExecSort(SortState *node)
 
 	prl_on = tuplesort_is_parallel(tuplesortstate);
 	if (InterruptHoldoffCount > 0) {
-		ereport(LOG,(errmsg("Master - Signals blocked.")));
+		ereport(DEBUG1,(errmsg("Master - Signals blocked.")));
 	} else {
-		ereport(LOG,(errmsg("Master - Signals OK.")));
+		ereport(DEBUG1,(errmsg("Master - Signals OK.")));
 	}
 	/*
 	 * Get the first or next tuple from tuplesort. Returns NULL if no more
