@@ -23,32 +23,36 @@
 #define DEBUG3		12
 #define DEBUG2		13
 #define DEBUG1		14			/* used by GUC debug_* variables */
-#define LOG			15			/* Server operational messages; sent only to
+
+#define DEBUG_PRL2  15
+#define DEBUG_PRL1  16
+
+#define LOG			17			/* Server operational messages; sent only to
 								 * server log by default. */
-#define COMMERROR	16			/* Client communication problems; same as LOG
+#define COMMERROR	18			/* Client communication problems; same as LOG
 								 * for server reporting, but never sent to
 								 * client. */
-#define INFO		17			/* Messages specifically requested by user (eg
+#define INFO		19			/* Messages specifically requested by user (eg
 								 * VACUUM VERBOSE output); always sent to
 								 * client regardless of client_min_messages,
 								 * but by default not sent to server log. */
-#define NOTICE		18			/* Helpful messages to users about query
+#define NOTICE		20			/* Helpful messages to users about query
 								 * operation; sent to client and server log by
 								 * default. */
-#define WARNING		19			/* Warnings.  NOTICE is for expected messages
+#define WARNING		21			/* Warnings.  NOTICE is for expected messages
 								 * like implicit sequence creation by SERIAL.
 								 * WARNING is for unexpected messages. */
-#define ERROR		20			/* user error - abort transaction; return to
+#define ERROR		22			/* user error - abort transaction; return to
 								 * known state */
 /* Save ERROR value in PGERROR so it can be restored when Win32 includes
  * modify it.  We have to use a constant rather than ERROR because macros
  * are expanded only when referenced outside macros.
  */
 #ifdef WIN32
-#define PGERROR		20
+#define PGERROR		23
 #endif
-#define FATAL		21			/* fatal error - abort process */
-#define PANIC		22			/* take down the other backends with me */
+#define FATAL		24			/* fatal error - abort process */
+#define PANIC		25			/* take down the other backends with me */
 
  /* #define DEBUG DEBUG1 */	/* Backward compatibility with pre-7.3 */
 
