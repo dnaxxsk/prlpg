@@ -622,6 +622,14 @@ static struct config_bool ConfigureNamesBool[] =
 		false, NULL, NULL
 	},
 	{
+		{"prl_sql", PGC_USERSET, PARALLEL_QUERY,
+			gettext_noop("Enables to parallelize the append operation"),
+			NULL
+		},
+		&prl_sql,
+		false, NULL, NULL
+	},
+	{
 		{"enable_indexscan", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of index-scan plans."),
 			NULL
@@ -1345,6 +1353,14 @@ static struct config_int ConfigureNamesInt[] =
 			NULL
 		},
 		&parallel_sort_level,
+		2, 1, 128, NULL, NULL
+	},
+	{
+		{"prl_sql_lvl", PGC_USERSET, PARALLEL_QUERY,
+			gettext_noop("Sets the parallel sql level in append"),
+			NULL
+		},
+		&prl_sql_lvl,
 		2, 1, 128, NULL, NULL
 	},
 	{
@@ -2203,6 +2219,24 @@ static struct config_real ConfigureNamesReal[] =
 
 static struct config_string ConfigureNamesString[] =
 {
+	{
+		{"prl_sql_q1", PGC_SIGHUP, PARALLEL_QUERY,
+			gettext_noop("Sets the parallel sql query 1."),
+			NULL
+		},
+		&prl_sql_q1,
+		"", NULL, NULL
+	},
+	
+	{
+		{"prl_sql_q2", PGC_SIGHUP, PARALLEL_QUERY,
+			gettext_noop("Sets the parallel sql query 2."),
+			NULL
+		},
+		&prl_sql_q2,
+		"", NULL, NULL
+	},
+		
 	{
 		{"archive_command", PGC_SIGHUP, WAL_SETTINGS,
 			gettext_noop("Sets the shell command that will be called to archive a WAL file."),
