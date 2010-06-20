@@ -15,11 +15,14 @@
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_database.h"
+#include "commands/async.h"
 #include "commands/dbcommands.h"
 #include "commands/vacuum.h"
+#include "executor/execdebug.h"
 #include "libpq/hba.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
+#include "parser/analyze.h"
 #include "pgstat.h"
 #include "postmaster/autovacuum.h"
 #include "postmaster/fork_process.h"
@@ -36,6 +39,7 @@
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/ps_status.h"
+#include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
 #include "utils/tuplesort.h"
@@ -45,6 +49,7 @@ static volatile sig_atomic_t got_SIGHUP = false;
 
 static void SigHupHandler(SIGNAL_ARGS);
 static void doSort(WorkDef * work, Worker * worker);
+static void doQuery(WorkDef * work, Worker * worker);
 
 
 bool isSlaveWorker(void) {
@@ -251,6 +256,11 @@ int slaveBackendMain(WorkDef * work) {
 		// sofar we dont reuse workers
 		return 0;
 	}
+	
+	// handle ERROR
+	PG_exception_stack = &local_sigjmp_buf;
+	
+	
 	if (InterruptHoldoffCount > 0) {
 		ereport(LOG,(errmsg("Signals blocked.")));
 	}
@@ -258,14 +268,18 @@ int slaveBackendMain(WorkDef * work) {
 	waitForState(worker, PRL_WORKER_STATE_READY);
 		
 	if (work->workType == PRL_WORK_TYPE_SORT) {
-		ereport(LOG,(errmsg("Worker: Job = SORT")));
+		ereport(DEBUG_PRL2,(errmsg("Worker: Job = SORT")));
 		StartTransactionCommand();
-		ereport(LOG,(errmsg("Worker: Job = SORT - transaction started")));
+		ereport(DEBUG_PRL2,(errmsg("Worker: Job = SORT - transaction started")));
 		doSort(work, worker);
-		ereport(LOG,(errmsg("Worker: Job = SORT - work done")));
+		ereport(DEBUG_PRL2,(errmsg("Worker: Job = SORT - work done")));
 		CommitTransactionCommand();
-		ereport(LOG,(errmsg("Worker: Job = SORT - transaction commited")));
-	} 
+		ereport(DEBUG_PRL2,(errmsg("Worker: Job = SORT - transaction commited")));
+	} else if (work->workType == PRL_WORK_TYPE_QUERY) {
+		ereport(DEBUG_PRL2,(errmsg("Worker: Job = QUERY")));
+		doQuery(work, worker);
+		ereport(DEBUG_PRL2,(errmsg("Worker: Job = QUERY - work done")));
+	}
 	
 	ereport(LOG,(errmsg("Worker: wait till the end")));
 	
@@ -323,7 +337,7 @@ static void doSort(WorkDef * work, Worker * worker) {
 	// and reuse these workers for another job 
 	ereport(LOG,(errmsg("Worker-doSort: after performsort")));
 	
-	pg_usleep(30 * 1000000L);
+	//pg_usleep(30 * 1000000L);
 	ereport(LOG,(errmsg("Worker-doSort: after performsort - after sleep")));
 	if (InterruptHoldoffCount > 0) {
 		ereport(LOG,(errmsg("Worker - Signals blocked.")));
@@ -369,6 +383,67 @@ static void doSort(WorkDef * work, Worker * worker) {
 	ereport(LOG,(errmsg("Worker-doSort: end")));
 }
 
+static void doQuery(WorkDef * work, Worker * worker) {
+	MemoryContext oldcontext;
+	List	   *parsetree_list;
+	ListCell   *parsetree_item;
+	QueryParams * pars = work->workParams->queryParams;
+	
+	StartTransactionCommand();
+	
+	oldcontext = MemoryContextSwitchTo(MessageContext);
+	
+	parsetree_list = pg_parse_query(pars->query_string);
+	
+	MemoryContextSwitchTo(oldcontext);
+	
+	// here should be just one 
+	foreach(parsetree_item, parsetree_list)
+	{
+		Node *parsetree = (Node *) lfirst(parsetree_item);
+		bool snapshot_set= false;
+		List *querytree_list, *plantree_list;
+		QueryDesc  *queryDesc;
+		ScanDirection direction;
+		long count;
+		long nprocessed;
+		
+		CHECK_FOR_INTERRUPTS();
+		
+		if (analyze_requires_snapshot(parsetree)) {
+			PushActiveSnapshot(GetTransactionSnapshot());
+			snapshot_set = true;
+		}
+		
+		oldcontext = MemoryContextSwitchTo(MessageContext);
+
+		querytree_list = pg_analyze_and_rewrite(parsetree, pars->query_string, NULL, 0);
+
+		plantree_list = pg_plan_queries(querytree_list, 0, NULL);
+		
+		if (snapshot_set)
+			PopActiveSnapshot();
+
+		/* If we got a cancel signal in analysis or planning, quit */
+		CHECK_FOR_INTERRUPTS();
+		
+		queryDesc = CreateQueryDesc((PlannedStmt *) linitial(plantree_list),
+									pars->query_string,
+									GetActiveSnapshot(),
+									InvalidSnapshot,
+									None_Receiver,
+									NULL,
+									0);
+		count = FETCH_ALL;
+		direction = ForwardScanDirection;
+		
+		ExecutorRun(queryDesc, direction, count);
+		nprocessed = queryDesc->estate->es_processed;
+		PopActiveSnapshot();
+	}
+	
+	CommitTransactionCommand();
+}
 
 static void
 SigHupHandler(SIGNAL_ARGS)
