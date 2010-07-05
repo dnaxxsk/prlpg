@@ -3314,7 +3314,7 @@ bool tuplesort_gettupleslot_from_worker(Tuplesortstate * state, bool forward, Tu
 	tuplesort_heap_siftup(state, false);
 	if (state->workersFinished[stup.tupindex] == false) {
 		// fetch another one copy it to the sort context and put it to heap
-		bqc = bufferQueueGet(state->workers[stup.tupindex]->work->workParams->bufferQueue);
+		bqc = bufferQueueGet(state->workers[stup.tupindex]->work->workParams->bufferQueue, true);
 		if (bqc->last) {
 			// well there is nothing more in this worker
 			state->workersFinished[stup.tupindex] = true;
@@ -3361,7 +3361,7 @@ void prepareForMerge(Tuplesortstate * state) {
 	
 	// fetch first one from all workers
 	for (cw = 0; cw < state->workersCnt; ++cw) {
-		bqc = bufferQueueGet(state->workers[cw]->work->workParams->bufferQueue);
+		bqc = bufferQueueGet(state->workers[cw]->work->workParams->bufferQueue, true);
 		if (bqc->last) {
 			state->workersFinished[cw] = true;
 			pfree(bqc);
