@@ -15,10 +15,21 @@
 #define NODEAPPEND_H
 
 #include "nodes/execnodes.h"
+#include "storage/parallel.h"
 
 extern AppendState *ExecInitAppend(Append *node, EState *estate, int eflags);
 extern TupleTableSlot *ExecAppend(AppendState *node);
 extern void ExecEndAppend(AppendState *node);
 extern void ExecReScanAppend(AppendState *node, ExprContext *exprCtxt);
+
+typedef struct PrlAppendState
+{
+	bool prlOn;
+	int workersCnt;
+	int lastWorker;
+	Worker ** workers;
+	bool * workersFinished;
+	long int jobId;
+} PrlAppendState;
 
 #endif   /* NODEAPPEND_H */
