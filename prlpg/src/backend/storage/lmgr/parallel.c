@@ -249,12 +249,19 @@ void printGetUsage(void) {
 	getDuration = 0;
 }
 
-BufferQueueCell * bufferQueueGet(BufferQueue * bq) {
+BufferQueueCell * bufferQueueGet(BufferQueue * bq, bool wait) {
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
 	long int duration_u = tv.tv_usec;
 	long int duration_s = tv.tv_sec;
 	BufferQueueCell * result= NULL;
+	if (!wait) {
+		PGSemaphoreLock(&(bq->mutex->sem), true);
+		if (bq->size == 0) {
+			PGSemaphoreUnlock(&(bq->mutex->sem));
+			return NULL;
+		}
+	}
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - start")));
 	PGSemaphoreLock(&(bq->items->sem), true);
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - items downed")));
@@ -355,7 +362,6 @@ int PrlGlobalSemas(void) {
 
 // returns true when requested number of workers is defined state
 bool waitForWorkers(long int jobId, int workersCnt, PRL_WORKER_STATE state) {
-	//bool result = false;
 	int readyCnt = 0;
 	ListCell * lc;
 	Worker * worker;
