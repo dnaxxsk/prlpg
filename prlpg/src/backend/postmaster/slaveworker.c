@@ -22,6 +22,7 @@
 #include "libpq/hba.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
+#include "nodes/nodes.h"
 #include "parser/analyze.h"
 #include "pgstat.h"
 #include "postmaster/autovacuum.h"
@@ -184,6 +185,8 @@ int slaveBackendMain(WorkDef * work) {
 	
 	ereport(LOG,(errmsg("Worker: Initialized")));
 	
+	//pg_usleep(60 * 1000000L);
+	
 	shListAppend(work->workParams->workersList, worker);
 	
 	// switch right here so we can init work in our local memory
@@ -311,7 +314,7 @@ static void doSort(WorkDef * work, Worker * worker) {
 	
 	// here put all from shared buffer queue until last one ...
 	ereport(LOG,(errmsg("Worker - doSort - before receiving tuples")));
-	while ((bqc = bufferQueueGet(work->workParams->bufferQueue))) {
+	while ((bqc = bufferQueueGet(work->workParams->bufferQueue, true))) {
 		if (bqc->last) {
 			ereport(LOG,(errmsg("Worker - doSort - received last")));
 			pfree(bqc);
@@ -407,6 +410,8 @@ static void doQuery(WorkDef * work, Worker * worker) {
 		ScanDirection direction;
 		long count;
 		long nprocessed;
+		PlannedStmt * ps;
+		PrlSendState * pss;
 		
 		CHECK_FOR_INTERRUPTS();
 		
@@ -427,6 +432,10 @@ static void doQuery(WorkDef * work, Worker * worker) {
 		/* If we got a cancel signal in analysis or planning, quit */
 		CHECK_FOR_INTERRUPTS();
 		
+		
+		// Add our sending node at the top
+		
+		
 		queryDesc = CreateQueryDesc((PlannedStmt *) linitial(plantree_list),
 									pars->query_string,
 									GetActiveSnapshot(),
@@ -434,8 +443,20 @@ static void doQuery(WorkDef * work, Worker * worker) {
 									None_Receiver,
 									NULL,
 									0);
+		
+		ExecutorStart(queryDesc, 0);
+		
 		count = FETCH_ALL;
 		direction = ForwardScanDirection;
+		
+		ps = (PlannedStmt *) linitial(plantree_list);
+		pss = palloc0(sizeof(PrlSendState));//makeNode(T_PrlSend);
+		pss->type = T_PrlSend;
+
+		pss->bufferQueue = worker->work->workParams->bufferQueue;
+		pss->lefttree = ps->planTree->lefttree;
+		ps->planTree->lefttree = pss;
+		
 		
 		ExecutorRun(queryDesc, direction, count);
 		nprocessed = queryDesc->estate->es_processed;
