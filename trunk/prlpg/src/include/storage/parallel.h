@@ -150,7 +150,7 @@ struct BufferQueueCell
 extern BufferQueue * createBufferQueue(int buffer_size);
 extern void destroyBufferQueue(BufferQueue * bq);
 extern bool bufferQueueAdd(BufferQueue * bq, BufferQueueCell * cell, bool stopOnLast);
-extern BufferQueueCell * bufferQueueGet(BufferQueue * bq);
+extern BufferQueueCell * bufferQueueGet(BufferQueue * bq, bool wait);
 extern BufferQueueCell * bufferQueueGetNoSem(BufferQueue * bq);
 extern bool bufferQueueSetStop(BufferQueue * bq, bool newStop);
 
