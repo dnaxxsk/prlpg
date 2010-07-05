@@ -54,13 +54,22 @@
  *							  |		  |		   |		|
  *							person employee student student-emp
  */
-
+#include <stdio.h>
+#include <string.h>
 #include "postgres.h"
 
+#include "miscadmin.h"
 #include "executor/execdebug.h"
 #include "executor/nodeAppend.h"
+#include "storage/proc.h"
+#include "storage/procsignal.h"
+#include "storage/pmsignal.h"
+
+#include "storage/parallel.h"
+#include "utils/memutils.h"
 
 static bool exec_append_initialize_next(AppendState *appendstate);
+static void registerWorkers(PrlAppendState * state, int prl_level);
 
 
 /* ----------------------------------------------------------------
@@ -181,6 +190,7 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 	appendstate->as_whichplan = 0;
 	exec_append_initialize_next(appendstate);
 
+	appendstate->prlInitDone = false;
 	return appendstate;
 }
 
@@ -193,44 +203,150 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 TupleTableSlot *
 ExecAppend(AppendState *node)
 {
-	for (;;)
-	{
-		PlanState  *subnode;
-		TupleTableSlot *result;
-
-		/*
-		 * figure out which subplan we are currently processing
-		 */
-		subnode = node->appendplans[node->as_whichplan];
-
-		/*
-		 * get a tuple from the subplan
-		 */
-		result = ExecProcNode(subnode);
-
-		if (!TupIsNull(result))
-		{
-			/*
-			 * If the subplan gave us something then return it as-is. We do
-			 * NOT make use of the result slot that was set up in
-			 * ExecInitAppend; there's no need for it.
-			 */
-			return result;
+	PrlAppendState * pas;
+	if (!node->prlInitDone) {
+		bool isPrlSqlOn = prl_sql;
+		int prlSqlLvl = prl_sql_lvl;
+		char * prlSqlQ1 = prl_sql_q1; 
+		char * prlSqlQ2 = prl_sql_q2;
+		pas = (PrlAppendState *) palloc0(sizeof(PrlAppendState));
+		pas->prlOn = isPrlSqlOn;
+		node->prl_append_state = (void *) pas;
+		
+		if (isPrlSqlOn) {
+			long int jobId = random();
+			int i = 0;
+			WorkDef* work;
+			QueryParams * qp = NULL;
+			MemoryContext oldContext;
+			
+			oldContext = MemoryContextSwitchTo(ShmParalellContext);
+			
+			pas->workersCnt = prlSqlLvl;
+			pas->jobId = jobId;
+			
+			if (workersList == NULL) {
+				workersList = createShList();
+			}
+			for (i=0; i < prlSqlLvl; ++i) {
+				work = (WorkDef*)palloc(sizeof(WorkDef));
+				work->workType = PRL_WORK_TYPE_QUERY;
+				work->state = PRL_STATE_REQUESTED;
+				work->workParams = (WorkParams*)palloc(sizeof(WorkParams));
+				work->workResult = (WorkResult*)palloc(sizeof(WorkResult));
+				work->jobId = jobId;
+				qp = (QueryParams *) palloc(sizeof(QueryParams));
+				switch (i) {
+				case 0:
+					qp->query_string = palloc(strlen(prlSqlQ1));
+					strcpy((char *)qp->query_string, prlSqlQ1);
+					break;
+				case 1:
+					qp->query_string = palloc(strlen(prlSqlQ2));
+					strcpy((char *)qp->query_string, prlSqlQ2);
+					break;
+				}
+				work->workParams->queryParams = qp;
+				work->workParams->workersList = workersList;
+				work->workParams->databaseId = MyProc->databaseId;
+				work->workParams->roleId = MyProc->roleId;
+				work->workParams->username = GetUserNameFromId(MyProc->roleId);
+				work->workParams->bufferQueue
+						= createBufferQueue(parallel_shared_queue_size);
+				shListAppend(prlJobsList, work);
+			}
+			
+			SendPostmasterSignal(PMSIGNAL_START_PARALLEL_WORKERS);
+			waitForWorkers(jobId, prlSqlLvl, PRL_WORKER_STATE_INITIAL);	
+			MemoryContextSwitchTo(oldContext);
+			
+			registerWorkers(pas, prlSqlLvl);
+			stateTransition(jobId, PRL_WORKER_STATE_INITIAL, PRL_WORKER_STATE_READY);
 		}
-
-		/*
-		 * Go on to the "next" subplan in the appropriate direction. If no
-		 * more subplans, return the empty slot set up for us by
-		 * ExecInitAppend.
-		 */
-		if (ScanDirectionIsForward(node->ps.state->es_direction))
-			node->as_whichplan++;
-		else
-			node->as_whichplan--;
-		if (!exec_append_initialize_next(node))
+		
+		node->prlInitDone = true;
+	}
+	pas = (PrlAppendState *) node->prl_append_state;
+	
+	if (pas->prlOn) {
+		int i = pas->lastWorker;
+		int j = 0;
+		BufferQueueCell * bqc;
+		
+		// check the end
+		bool end= true;
+		for (j = 0; j < pas->workersCnt; ++j) {
+			if (!pas->workersFinished[j]) {
+				end = false;
+				break;
+			}
+		}
+		if (end) {
 			return ExecClearTuple(node->ps.ps_ResultTupleSlot);
-
-		/* Else loop back and try to get a tuple from the new subplan */
+		}
+		
+		for(;;) {
+			// posun na dalsieho, cyklicky
+			i = (i+1)% pas->workersCnt;
+			// ak este neskoncil
+			if (!pas->workersFinished[i]) {
+				bqc = bufferQueueGet(pas->workers[i]->work->workParams->bufferQueue, false);
+				if (bqc != NULL) {
+					if (bqc->last) {
+						pas->workersFinished[i] = true;
+						pfree(bqc);
+						return ExecClearTuple(node->ps.ps_ResultTupleSlot);
+					} else {
+						pas->lastWorker = i;
+						MinimalTuple tup = heap_copy_minimal_tuple(bqc->ptr_value);
+						ExecStoreMinimalTuple(tup, node->ps.ps_ResultTupleSlot, true);
+						pfree((MinimalTuple)bqc->ptr_value);
+						pfree(bqc);
+						return node->ps.ps_ResultTupleSlot;
+					}
+				}
+			}
+		}
+	} else {
+		for (;;)
+		{
+			PlanState  *subnode;
+			TupleTableSlot *result;
+	
+			/*
+			 * figure out which subplan we are currently processing
+			 */
+			subnode = node->appendplans[node->as_whichplan];
+	
+			/*
+			 * get a tuple from the subplan
+			 */
+			result = ExecProcNode(subnode);
+	
+			if (!TupIsNull(result))
+			{
+				/*
+				 * If the subplan gave us something then return it as-is. We do
+				 * NOT make use of the result slot that was set up in
+				 * ExecInitAppend; there's no need for it.
+				 */
+				return result;
+			}
+	
+			/*
+			 * Go on to the "next" subplan in the appropriate direction. If no
+			 * more subplans, return the empty slot set up for us by
+			 * ExecInitAppend.
+			 */
+			if (ScanDirectionIsForward(node->ps.state->es_direction))
+				node->as_whichplan++;
+			else
+				node->as_whichplan--;
+			if (!exec_append_initialize_next(node))
+				return ExecClearTuple(node->ps.ps_ResultTupleSlot);
+	
+			/* Else loop back and try to get a tuple from the new subplan */
+		}
 	}
 }
 
@@ -248,18 +364,24 @@ ExecEndAppend(AppendState *node)
 	PlanState **appendplans;
 	int			nplans;
 	int			i;
-
+	PrlAppendState * pas;
+	
 	/*
 	 * get information from the node
 	 */
 	appendplans = node->appendplans;
 	nplans = node->as_nplans;
-
-	/*
-	 * shut down each of the subscans
-	 */
-	for (i = 0; i < nplans; i++)
-		ExecEndNode(appendplans[i]);
+	pas = (PrlAppendState *) node->prl_append_state;
+	
+	if (pas->prlOn) {
+		//TODO clear the workers
+	} else {
+		/*
+		 * shut down each of the subscans
+		 */
+		for (i = 0; i < nplans; i++)
+			ExecEndNode(appendplans[i]);
+	}
 }
 
 void
@@ -289,4 +411,34 @@ ExecReScanAppend(AppendState *node, ExprContext *exprCtxt)
 	}
 	node->as_whichplan = 0;
 	exec_append_initialize_next(node);
+}
+
+static void registerWorkers(PrlAppendState * state, int prl_level) {
+	// register them in my array
+	int i, readyCnt = 0;
+	Worker * worker;
+	ListCell * lc;
+	state->workers = palloc(sizeof(Worker *) * prl_level);
+	// nobody was last sofar ... but it doesnt really matter who is
+	// .. because it will be used as round robin 
+	state->lastWorker = -1;
+
+	SpinLockAcquire(&workersList->mutex);
+	foreach(lc, workersList->list) {
+		worker = (Worker *) lfirst(lc);
+		SpinLockAcquire(&worker->mutex);
+		if (worker->valid && worker->state == PRL_WORKER_STATE_INITIAL && worker->work->jobId == state->jobId) {
+			state->workers[readyCnt++] = worker;
+		}
+		SpinLockRelease(&worker->mutex);
+	}
+	SpinLockRelease(&workersList->mutex);
+
+	state->workersCnt = readyCnt;
+	Assert(readyCnt == prl_level);
+	// set them all as unfinished
+	state->workersFinished = (bool *)palloc(sizeof(bool) * state->workersCnt);
+	for (i = 0; i < state->workersCnt; ++i) {
+		state->workersFinished[i] = false;
+	}
 }
