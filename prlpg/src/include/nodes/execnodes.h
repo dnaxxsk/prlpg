@@ -1046,6 +1046,8 @@ typedef struct AppendState
 	PlanState **appendplans;	/* array of PlanStates for my inputs */
 	int			as_nplans;
 	int			as_whichplan;
+	bool		prlInitDone;
+	void 	   *prl_append_state;
 } AppendState;
 
 /* ----------------
@@ -1743,5 +1745,12 @@ typedef struct LimitState
 	int64		position;		/* 1-based index of last tuple returned */
 	TupleTableSlot *subSlot;	/* tuple last obtained from subplan */
 } LimitState;
+
+typedef struct PrlSendState
+{
+	NodeTag		type;
+	Plan * lefttree;
+	struct BufferQueue * bufferQueue;
+} PrlSendState;
 
 #endif   /* EXECNODES_H */

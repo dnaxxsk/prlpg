@@ -114,6 +114,7 @@ typedef enum NodeTag
 	T_SetOpState,
 	T_LockRowsState,
 	T_LimitState,
+	T_PrlSend, // parallel execution node which sends data
 
 	/*
 	 * TAGS FOR PRIMITIVE NODES (primnodes.h)
