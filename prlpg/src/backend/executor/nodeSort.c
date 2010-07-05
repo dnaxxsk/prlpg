@@ -54,7 +54,6 @@ ExecSort(SortState *node)
 	int prl_level = parallel_sort_level;
 	bool prl_on = parallel_execution_allowed;
 	int i,j, ii;
-	int readyCnt = 0;
 	SortParams * sortParams;
 	MemoryContext currctx;
 	long int jobId = 0;
@@ -148,7 +147,7 @@ ExecSort(SortState *node)
 			node->bound_Done = node->bound;
 			SO1_printf("ExecSort: %s\n", "sorting done");
 		} else {
-			int mmask = siggetmask();
+			int mmask = sigprocmask();
 			ereport(LOG,(errmsg("Master mask is %d", mmask)));
 			tuplesort_set_prl_level(tuplesortstate, prl_level);
 			tuplesort_set_workersId(tuplesortstate, workersId);
@@ -198,7 +197,6 @@ ExecSort(SortState *node)
 			
 			ereport(LOG,(errmsg("Master: Signalizing Postmaster")));
 			SendPostmasterSignal(PMSIGNAL_START_PARALLEL_WORKERS);
-			readyCnt = 0;
 			
 			// wait until they are ready
 			waitForWorkers(workersId, prl_level, PRL_WORKER_STATE_INITIAL);
@@ -253,8 +251,8 @@ ExecSort(SortState *node)
 			node->bounded_Done = node->bounded;
 			node->bound_Done = node->bound;
 			SO1_printf("ExecSort: %s\n", "sorting done");
-			mmask = siggetmask();
-			ereport(LOG,(errmsg("Master mask is %d", mmask)));
+//			mmask = siggetmask();
+//			ereport(LOG,(errmsg("Master mask is %d", mmask)));
 		}
 	}
 		
@@ -274,8 +272,7 @@ ExecSort(SortState *node)
 	slot = node->ss.ps.ps_ResultTupleSlot;
 	if (prl_on) {
 		jobId = tuplesort_get_workersId(tuplesortstate);
-		if (!tuplesort_gettupleslot_from_worker(tuplesortstate, ScanDirectionIsForward(dir), slot)) {
-		}
+		tuplesort_gettupleslot_from_worker(tuplesortstate, ScanDirectionIsForward(dir), slot);
 	} else {
 		(void) tuplesort_gettupleslot(tuplesortstate,
 				ScanDirectionIsForward(dir), slot);
@@ -413,7 +410,7 @@ ExecEndSort(SortState *node)
 						// it cant be empty because last one was not put inside
 						// well theoretically it can be .. we would have to get here before we took last one from queue and the worker could not
 						// insert next one ...
-						bqc = bufferQueueGet(worker->work->workParams->bufferQueue);
+						bqc = bufferQueueGet(worker->work->workParams->bufferQueue, true);
 						if (bqc->last) {
 							pfree(bqc);
 						} else {
