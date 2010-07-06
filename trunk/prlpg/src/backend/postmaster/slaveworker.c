@@ -452,12 +452,13 @@ static void doQuery(WorkDef * work, Worker * worker) {
 		direction = ForwardScanDirection;
 		
 		ps = (PlannedStmt *) linitial(plantree_list);
-		pss = palloc0(sizeof(PrlSendState));//makeNode(T_PrlSend);
-		pss->type = T_PrlSend;
+		pss = makeNode(PrlSendState);//palloc0(sizeof(PrlSendState));//makeNode(T_PrlSend);
 
 		pss->bufferQueue = worker->work->workParams->bufferQueue;
-		pss->lefttree = ps->planTree->lefttree;
-		ps->planTree->lefttree = pss;
+		outerPlanState(pss) = queryDesc->planstate;
+		//pss->ps->lefttree = (struct PlanState *)queryDesc->planstate;
+//		pss->ps->instrument = NULL;
+		queryDesc->planstate = pss;
 		
 		
 		ExecutorRun(queryDesc, direction, count);
