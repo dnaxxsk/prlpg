@@ -414,7 +414,6 @@ static void doQuery(WorkDef * work, Worker * worker) {
 		ScanDirection direction;
 		long count;
 		long nprocessed;
-		PlannedStmt * ps;
 		PrlSendState * pss;
 		
 		CHECK_FOR_INTERRUPTS();
@@ -451,15 +450,11 @@ static void doQuery(WorkDef * work, Worker * worker) {
 		count = FETCH_ALL;
 		direction = ForwardScanDirection;
 		
-		ps = (PlannedStmt *) linitial(plantree_list);
-		pss = makeNode(PrlSendState);//palloc0(sizeof(PrlSendState));//makeNode(T_PrlSend);
-
+		// append our node
+		pss = makeNode(PrlSendState);
 		pss->bufferQueue = worker->work->workParams->bufferQueue;
 		outerPlanState(pss) = queryDesc->planstate;
-		//pss->ps->lefttree = (struct PlanState *)queryDesc->planstate;
-//		pss->ps->instrument = NULL;
 		queryDesc->planstate = pss;
-		
 		
 		ExecutorRun(queryDesc, direction, count);
 		nprocessed = queryDesc->estate->es_processed;
