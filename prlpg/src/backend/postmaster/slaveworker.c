@@ -189,6 +189,12 @@ int slaveBackendMain(WorkDef * work) {
 	
 	shListAppend(work->workParams->workersList, worker);
 	
+	MessageContext = AllocSetContextCreate(TopMemoryContext,
+										  "MessageContext",
+										  ALLOCSET_DEFAULT_MINSIZE,
+										  ALLOCSET_DEFAULT_INITSIZE,
+										  ALLOCSET_DEFAULT_MAXSIZE);
+	
 	// switch right here so we can init work in our local memory
 	MemoryContextSwitchTo(oldContext);
 	
@@ -391,11 +397,9 @@ static void doQuery(WorkDef * work, Worker * worker) {
 	List	   *parsetree_list;
 	ListCell   *parsetree_item;
 	QueryParams * pars = work->workParams->queryParams;
-	
 	StartTransactionCommand();
 	
 	oldcontext = MemoryContextSwitchTo(MessageContext);
-	
 	parsetree_list = pg_parse_query(pars->query_string);
 	
 	MemoryContextSwitchTo(oldcontext);
@@ -433,9 +437,7 @@ static void doQuery(WorkDef * work, Worker * worker) {
 		CHECK_FOR_INTERRUPTS();
 		
 		
-		// Add our sending node at the top
-		
-		
+		PushActiveSnapshot(GetTransactionSnapshot());
 		queryDesc = CreateQueryDesc((PlannedStmt *) linitial(plantree_list),
 									pars->query_string,
 									GetActiveSnapshot(),
