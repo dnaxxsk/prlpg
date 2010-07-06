@@ -470,7 +470,7 @@ ExecProcNode(PlanState *node)
 			result = ExecLimit((LimitState *) node);
 			break;
 		
-		case T_PrlSend:
+		case T_PrlSendState:
 			result = ExecPrlSend((PrlSendState *) node);
 			break;
 
