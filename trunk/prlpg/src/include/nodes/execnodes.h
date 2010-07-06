@@ -1748,8 +1748,7 @@ typedef struct LimitState
 
 typedef struct PrlSendState
 {
-	NodeTag		type;
-	Plan * lefttree;
+	PlanState	ps;
 	struct BufferQueue * bufferQueue;
 } PrlSendState;
 
