@@ -174,7 +174,7 @@ int slaveBackendMain(WorkDef * work) {
 	ereport(LOG,(errmsg("Worker: Initializing - step 11")));
 	// here will be mail loop for slave backend work
 	
-	oldContext = MemoryContextSwitchTo(ShmParalellContext);
+	oldContext = MemoryContextSwitchTo(ShmParallelContext);
 	worker = (Worker*)palloc(sizeof(Worker));
 	SpinLockInit(&worker->mutex);
 	worker->workerPid = MyProcPid;
@@ -365,7 +365,7 @@ static void doSort(WorkDef * work, Worker * worker) {
 	waitForState(worker, PRL_WORKER_STATE_FINISHED_ACK);
 	
 	ereport(LOG,(errmsg("Worker-doSort: now in state FINISHED_ACK, starting to send tuples back to master")));
-	oldContext = MemoryContextSwitchTo(ShmParalellContext);
+	oldContext = MemoryContextSwitchTo(ShmParallelContext);
 	while (true) {
 		BufferQueueCell * bqc = (BufferQueueCell *)palloc(sizeof(BufferQueueCell));
 		PrlSortTuple * pstup = (PrlSortTuple *) palloc(sizeof(PrlSortTuple));
