@@ -25,12 +25,13 @@ TupleTableSlot *ExecPrlSend(PrlSendState *node) {
 			MemoryContextSwitchTo(oldContext);
 			break;
 		}
-		
-		
+		// TODO send all
 	}
 	
 	return NULL;
 }
 void ExecEndPrlSend(PrlSendState *node) {
+	
+	ExecEndNode(outerPlanState(node));
 	return;
 }

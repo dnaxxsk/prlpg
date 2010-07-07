@@ -459,6 +459,10 @@ static void doQuery(WorkDef * work, Worker * worker) {
 		ExecutorRun(queryDesc, direction, count);
 		nprocessed = queryDesc->estate->es_processed;
 		PopActiveSnapshot();
+		
+		
+		ExecutorEnd(queryDesc);
+		FreeQueryDesc(queryDesc);
 	}
 	
 	CommitTransactionCommand();
