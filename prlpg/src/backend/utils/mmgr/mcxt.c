@@ -45,7 +45,7 @@ MemoryContext CacheMemoryContext = NULL;
 MemoryContext MessageContext = NULL;
 MemoryContext TopTransactionContext = NULL;
 MemoryContext CurTransactionContext = NULL;
-MemoryContext ShmParalellContext = NULL;
+MemoryContext ShmParallelContext = NULL;
 
 /* This is a transient link to the active portal's memory context: */
 MemoryContext PortalContext = NULL;
@@ -110,7 +110,7 @@ MemoryContextInit(void)
 										 8 * 1024,
 										 8 * 1024);
 	
-	ShmParalellContext = ShmContextCreate ((MemoryContext)NULL,"ShmParalellContext",
+	ShmParallelContext = ShmContextCreate ((MemoryContext)NULL,"ShmParallelContext",
 				0,
 				8*1024,
 				8*1024);

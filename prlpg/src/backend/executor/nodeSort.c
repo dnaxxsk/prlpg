@@ -153,7 +153,7 @@ ExecSort(SortState *node)
 			tuplesort_set_workersId(tuplesortstate, workersId);
 			node->tuplesortstate = (void *) tuplesortstate;
 	
-			oldContext = MemoryContextSwitchTo(ShmParalellContext);
+			oldContext = MemoryContextSwitchTo(ShmParallelContext);
 			
 			// kind of on demand but it would be better to do it during init of this backend
 			if (workersList == NULL) {

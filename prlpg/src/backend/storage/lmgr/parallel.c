@@ -54,7 +54,7 @@ void parallel_init(void) {
 SharedList * createShList(void) {
 	MemoryContext oldContext;
 	SharedList * result;
-	oldContext = MemoryContextSwitchTo(ShmParalellContext);
+	oldContext = MemoryContextSwitchTo(ShmParallelContext);
 	result = (SharedList*)palloc(sizeof(SharedList));
 	SpinLockInit(&result->mutex);
 	result->list = NIL;
@@ -64,7 +64,7 @@ SharedList * createShList(void) {
 
 void shListAppend(SharedList * list, void * object) {
 	MemoryContext oldContext;
-	oldContext = MemoryContextSwitchTo(ShmParalellContext);
+	oldContext = MemoryContextSwitchTo(ShmParallelContext);
 	HOLD_INTERRUPTS();
 	SpinLockAcquire(&list->mutex);
 	list->list = lappend(list->list, object);
@@ -83,7 +83,7 @@ void shListRemove(SharedList * list, void * object) {
 
 void shListAppendInt(SharedList * list, int value) {
 	MemoryContext oldContext;
-	oldContext = MemoryContextSwitchTo(ShmParalellContext);
+	oldContext = MemoryContextSwitchTo(ShmParallelContext);
 	HOLD_INTERRUPTS();
 	SpinLockAcquire(&list->mutex);
 	list->list = lappend_int(list->list, value);
@@ -261,6 +261,7 @@ BufferQueueCell * bufferQueueGet(BufferQueue * bq, bool wait) {
 			PGSemaphoreUnlock(&(bq->mutex->sem));
 			return NULL;
 		}
+		PGSemaphoreUnlock(&(bq->mutex->sem));
 	}
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - start")));
 	PGSemaphoreLock(&(bq->items->sem), true);

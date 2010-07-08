@@ -3260,7 +3260,7 @@ void distributeToWorker(Tuplesortstate * state, TupleTableSlot * slot,
 		for (i = 0; i < state->workersCnt; ++i) {
 			ereport(LOG,(errmsg("nodeSort - last tuple - sending ending tuple to worker.")));
 			// where to switch context? .. here or should we make the caller responsible?
-			oldContext = MemoryContextSwitchTo(ShmParalellContext);
+			oldContext = MemoryContextSwitchTo(ShmParallelContext);
 			// workers will deallocate it .. 
 			bqc = (BufferQueueCell *)palloc(sizeof(BufferQueueCell));
 			bqc->last = true;
@@ -3275,7 +3275,7 @@ void distributeToWorker(Tuplesortstate * state, TupleTableSlot * slot,
 //		ereport(DEBUG1,(errmsg("nodeSort - pushing tuple to worker %d starting.", now)));
 		// same like before .. who should be responsible for memory context switching? 
 		// caller definitely knows we need shared memory
-		oldContext = MemoryContextSwitchTo(ShmParalellContext);
+		oldContext = MemoryContextSwitchTo(ShmParallelContext);
 		// copy to stup
 		stup = tuplesort_prl_puttupleslot(state, slot);
 		// create box which worker is responsible of deallocating ..
