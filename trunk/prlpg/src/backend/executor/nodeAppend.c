@@ -220,7 +220,7 @@ ExecAppend(AppendState *node)
 			QueryParams * qp = NULL;
 			MemoryContext oldContext;
 			
-			oldContext = MemoryContextSwitchTo(ShmParalellContext);
+			oldContext = MemoryContextSwitchTo(ShmParallelContext);
 			
 			pas->workersCnt = prlSqlLvl;
 			pas->jobId = jobId;
@@ -373,15 +373,12 @@ ExecEndAppend(AppendState *node)
 	nplans = node->as_nplans;
 	pas = (PrlAppendState *) node->prl_append_state;
 	
+	for (i = 0; i < nplans; i++)
+		ExecEndNode(appendplans[i]);
+	
 	if (pas->prlOn) {
 		//TODO clear the workers
-	} else {
-		/*
-		 * shut down each of the subscans
-		 */
-		for (i = 0; i < nplans; i++)
-			ExecEndNode(appendplans[i]);
-	}
+	} 
 }
 
 void
