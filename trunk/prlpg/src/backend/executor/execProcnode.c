@@ -697,6 +697,10 @@ ExecEndNode(PlanState *node)
 		case T_LimitState:
 			ExecEndLimit((LimitState *) node);
 			break;
+			
+		case T_PrlSendState:
+			ExecEndPrlSend((PrlSendState *) node);
+			break;
 
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
