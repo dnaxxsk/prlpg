@@ -215,7 +215,7 @@ static void ShmFreeAlloc(MemoryContext context, void * pointer) {
 		//mm_free(ctx->mm,(void *)block);
 	//}
 	
-	//(*ShmParalellContext->methods->stats)(ShmParalellContext, 0);
+	//(*ShmParallelContext->methods->stats)(ShmParallelContext, 0);
 	return;
 }
 
