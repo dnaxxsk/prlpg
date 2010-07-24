@@ -398,7 +398,7 @@ ExecEndSort(SortState *node)
 			foreach(lc, workersList->list) {
 				worker = (Worker *) lfirst(lc);
 				SpinLockAcquire(&worker->mutex);
-				if (worker->valid && worker->state == PRL_WORKER_STATE_FINISHED_ACK && worker->work->jobId == jobId) {
+				if (worker->valid && /*worker->state == PRL_WORKER_STATE_FINISHED_ACK &&*/ worker->work->jobId == jobId) {
 					worker->state = PRL_WORKER_STATE_END;
 					lastValue = bufferQueueSetStop(worker->work->workParams->bufferQueue, true);
 					if (!lastValue) {
@@ -406,17 +406,16 @@ ExecEndSort(SortState *node)
 						// clear at least one value, so they have a chance to notice the end
 						// sended did not send all tuples ...
 						// he might be stuck on semaphore
-						// clean bufferqueue
 						// it cant be empty because last one was not put inside
-						// well theoretically it can be .. we would have to get here before we took last one from queue and the worker could not
-						// insert next one ...
-						bqc = bufferQueueGet(worker->work->workParams->bufferQueue, true);
-						if (bqc->last) {
-							pfree(bqc);
-						} else {
-							pfree(((MinimalTuple *)((PrlSortTuple *)bqc->ptr_value)->tuple));
-							pfree((PrlSortTuple *)bqc->ptr_value);
-							pfree(bqc);
+						bqc = bufferQueueGet(worker->work->workParams->bufferQueue, false);
+						if (bqc != NULL) {
+							if (bqc->last) {
+								pfree(bqc);
+							} else {
+								pfree(((MinimalTuple *)((PrlSortTuple *)bqc->ptr_value)->tuple));
+								pfree((PrlSortTuple *)bqc->ptr_value);
+								pfree(bqc);
+							}
 						}
 					}
 				}
@@ -433,7 +432,7 @@ ExecEndSort(SortState *node)
 			foreach(lc, workersList->list) {
 				worker = (Worker *) lfirst(lc);
 				SpinLockAcquire(&worker->mutex);
-				if (worker->valid && worker->state == PRL_WORKER_STATE_END_ACK && worker->work->jobId == jobId) {
+				if (worker->valid && /*worker->state == PRL_WORKER_STATE_END_ACK &&*/ worker->work->jobId == jobId) {
 					ereport(LOG,(errmsg("nodeSort - performing one bufferqueue cleaning")));
 					bqc = bufferQueueGetNoSem(worker->work->workParams->bufferQueue);
 					while (bqc != NULL) {
