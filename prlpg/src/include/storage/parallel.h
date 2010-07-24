@@ -38,8 +38,8 @@ typedef enum {
 
 typedef enum {
 	PRL_WORK_TYPE_SORT // sort
-	//PRL_WORK_TYPE_SORT_MULTIPLE_LTS // sort but by using multiple logical tape sets instead of std producer consumer scenario
 	,PRL_WORK_TYPE_QUERY
+	,PRL_WORK_TEST_MEM
 } PRL_WORK_TYPE;
 
 //typedef struct SharedList SharedList;
@@ -185,7 +185,7 @@ extern bool waitForWorkers(long int jobId, int workersCnt, PRL_WORKER_STATE stat
 extern bool waitForAllWorkers(PRL_WORKER_STATE state);
 extern void waitForState(Worker * worker, PRL_WORKER_STATE state);
 extern void waitForAndSet(Worker * worker, PRL_WORKER_STATE state, PRL_WORKER_STATE newState);
-extern void cancelWorkers();
+extern void cancelWorkers(void);
 
 // returns number of workers which changed the state
 extern int stateTransition(long int jobId, PRL_WORKER_STATE oldState, PRL_WORKER_STATE newState);
