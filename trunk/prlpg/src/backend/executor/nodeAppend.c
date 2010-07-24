@@ -272,20 +272,21 @@ ExecAppend(AppendState *node)
 		int i = pas->lastWorker;
 		int j = 0;
 		BufferQueueCell * bqc;
-		
-		// check the end
-		bool end= true;
-		for (j = 0; j < pas->workersCnt; ++j) {
-			if (!pas->workersFinished[j]) {
-				end = false;
-				break;
-			}
-		}
-		if (end) {
-			return ExecClearTuple(node->ps.ps_ResultTupleSlot);
-		}
+		MinimalTuple tup;
 		
 		for(;;) {
+			// check the end
+			bool end= true;
+			for (j = 0; j < pas->workersCnt; ++j) {
+				if (!pas->workersFinished[j]) {
+					end = false;
+					break;
+				}
+			}
+			if (end) {
+				return ExecClearTuple(node->ps.ps_ResultTupleSlot);
+			}
+			
 			// posun na dalsieho, cyklicky
 			i = (i+1)% pas->workersCnt;
 			// ak este neskoncil
@@ -295,10 +296,9 @@ ExecAppend(AppendState *node)
 					if (bqc->last) {
 						pas->workersFinished[i] = true;
 						pfree(bqc);
-						return ExecClearTuple(node->ps.ps_ResultTupleSlot);
 					} else {
 						pas->lastWorker = i;
-						MinimalTuple tup = heap_copy_minimal_tuple(bqc->ptr_value);
+						tup = heap_copy_minimal_tuple(bqc->ptr_value);
 						ExecStoreMinimalTuple(tup, node->ps.ps_ResultTupleSlot, true);
 						pfree((MinimalTuple)bqc->ptr_value);
 						pfree(bqc);
@@ -365,6 +365,12 @@ ExecEndAppend(AppendState *node)
 	int			nplans;
 	int			i;
 	PrlAppendState * pas;
+	ListCell * lc;
+	Worker * worker;
+	long int jobId = 0;
+	int workersCnt = 0;
+	bool lastValue = false;
+	BufferQueueCell * bqc;
 	
 	/*
 	 * get information from the node
@@ -377,7 +383,63 @@ ExecEndAppend(AppendState *node)
 		ExecEndNode(appendplans[i]);
 	
 	if (pas->prlOn) {
-		//TODO clear the workers
+		jobId = pas->jobId;
+		workersCnt = pas->workersCnt;
+		SpinLockAcquire(&workersList->mutex);
+		foreach(lc, workersList->list) {
+			worker = (Worker *) lfirst(lc);
+			SpinLockAcquire(&worker->mutex);
+			if (worker->valid && worker->work->jobId == jobId) {
+				worker->state = PRL_WORKER_STATE_END;
+				lastValue = bufferQueueSetStop(worker->work->workParams->bufferQueue, true);
+				if (!lastValue) {
+					// clear at least one value, so they have a chance to notice the end
+					// sended did not send all tuples ...
+					// he might be stuck on semaphore
+					// it cant be empty because last one was not put inside
+					bqc = bufferQueueGet(worker->work->workParams->bufferQueue, false);
+					if (bqc != NULL) {
+						if (bqc->last) {
+							pfree(bqc);
+						} else {
+							pfree((MinimalTuple *)bqc->ptr_value);
+							pfree(bqc);
+						}
+					}
+				}
+			}
+			SpinLockRelease(&worker->mutex);
+		}
+		SpinLockRelease(&workersList->mutex);
+		
+		waitForWorkers(jobId,workersCnt,PRL_WORKER_STATE_END_ACK);
+		
+		SpinLockAcquire(&workersList->mutex);
+		foreach(lc, workersList->list) {
+			worker = (Worker *) lfirst(lc);
+			SpinLockAcquire(&worker->mutex);
+			if (worker->valid && worker->work->jobId == jobId) {
+				bqc = bufferQueueGetNoSem(worker->work->workParams->bufferQueue);
+				while (bqc != NULL) {
+					if (bqc->last) {
+						pfree(bqc);
+					} else {
+						pfree((MinimalTuple *)bqc->ptr_value);
+						pfree(bqc);
+					}
+					bqc = bufferQueueGetNoSem(worker->work->workParams->bufferQueue);
+				}
+				destroyBufferQueue(worker->work->workParams->bufferQueue);
+			}
+			SpinLockRelease(&worker->mutex);
+			/*TODO - add correct removal of shared worker structures
+			 * spinlock destroy ...
+			 shListRemove(prlJobsList, worker->work);
+			 shListRemove(worker->work->workParams->workersList, worker);
+			 pfree(worker);
+			 */
+		}
+		SpinLockRelease(&workersList->mutex);
 	} 
 }
 
