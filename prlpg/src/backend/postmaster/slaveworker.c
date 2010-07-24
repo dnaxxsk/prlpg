@@ -51,6 +51,7 @@ static volatile sig_atomic_t got_SIGHUP = false;
 static void SigHupHandler(SIGNAL_ARGS);
 static void doSort(WorkDef * work, Worker * worker);
 static void doQuery(WorkDef * work, Worker * worker);
+void WorkerStatementCancelHandler(SIGNAL_ARGS);
 
 
 bool isSlaveWorker(void) {
@@ -100,7 +101,7 @@ WorkerStatementCancelHandler(SIGNAL_ARGS)
 int slaveBackendMain(WorkDef * work) {
 	MemoryContext oldContext;
 	Worker * worker;
-	char	   *dbname;
+//	char	   *dbname;
 	sigjmp_buf	local_sigjmp_buf;
 	
 	// wait one minute so i can attach if i want to ..
@@ -158,11 +159,11 @@ int slaveBackendMain(WorkDef * work) {
 	// neprijimalo to SIGINT ked ho canceloval master
 	//sigaddset(&UnBlockSig, SIGINT);
 	PG_SETMASK(&UnBlockSig);
-	int mmask = siggetmask();
-	ereport(LOG,(errmsg("Worker mask is %d, %d, %d", mmask,BlockSig, UnBlockSig)));
+	//int mmask = siggetmask();
+	//ereport(LOG,(errmsg("Worker mask is %d, %d, %d", mmask,BlockSig, UnBlockSig)));
 	//here I should get masters dbname and username
 	//ereport(DEBUG3,(errmsg_internal("InitPostgres")));
-	InitPostgres(NULL, work->workParams->databaseId, work->workParams->username, &dbname);
+	InitPostgres(NULL, work->workParams->databaseId, work->workParams->username, NULL);
 	ereport(LOG,(errmsg("Worker: Initializing - step 9")));
 	SetProcessingMode(NormalProcessing);
 	ereport(LOG,(errmsg("Worker: Initializing - step 10")));
@@ -454,7 +455,7 @@ static void doQuery(WorkDef * work, Worker * worker) {
 		pss = makeNode(PrlSendState);
 		pss->bufferQueue = worker->work->workParams->bufferQueue;
 		outerPlanState(pss) = queryDesc->planstate;
-		queryDesc->planstate = pss;
+		queryDesc->planstate = (PlanState*)pss;
 		
 		ExecutorRun(queryDesc, direction, count);
 		nprocessed = queryDesc->estate->es_processed;
