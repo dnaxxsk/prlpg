@@ -21,28 +21,26 @@ TupleTableSlot *ExecPrlSend(PrlSendState *node) {
 			// master will deallocate it .. 
 			bqc = (BufferQueueCell *)palloc(sizeof(BufferQueueCell));
 			bqc->last = true;
-			bufferQueueAdd(bq, bqc, false);
+			bufferQueueAdd(bq, bqc, true);
 			MemoryContextSwitchTo(oldContext);
 			break;
 		}
-		// TODO send all
 		oldContext = MemoryContextSwitchTo(ShmParallelContext);
-		
-		bqc = (BufferQueue *) palloc(sizeof(BufferQueueCell));
+		bqc = (BufferQueueCell *) palloc(sizeof(BufferQueueCell));
 		bqc->last = false;
 		bqc->ptr_value = (void *)ExecCopySlotMinimalTuple(slot);
-//		MinimalTuple tuple;
-//		tuple = ExecCopySlotMinimalTuple(slot);
-		bufferQueueAdd(bq, bqc, false);
+		if (bufferQueueAdd(bq, bqc, true)) {
+			// in case of LIMIT stop
+			MemoryContextSwitchTo(oldContext);
+			break;
+		}
 		// how to get disposed of that "slot" containing the data in a correct way?
-		
 		MemoryContextSwitchTo(oldContext);
 	}
 	
 	return NULL;
 }
 void ExecEndPrlSend(PrlSendState *node) {
-	
 	ExecEndNode(outerPlanState(node));
 	return;
 }
