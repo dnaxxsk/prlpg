@@ -251,10 +251,14 @@ void printGetUsage(void) {
 
 BufferQueueCell * bufferQueueGet(BufferQueue * bq, bool wait) {
 	struct timeval tv;
-	gettimeofday(&tv, NULL);
-	long int duration_u = tv.tv_usec;
-	long int duration_s = tv.tv_sec;
+	long int duration_u = 0;
+	long int duration_s = 0;
 	BufferQueueCell * result= NULL;
+	
+	gettimeofday(&tv, NULL);
+	duration_u = tv.tv_usec;
+	duration_s = tv.tv_sec;
+	
 	if (!wait) {
 		PGSemaphoreLock(&(bq->mutex->sem), true);
 		if (bq->size == 0) {
@@ -407,7 +411,7 @@ bool waitForAllWorkers(PRL_WORKER_STATE state) {
 	return true;
 }
 
-void cancelWorkers() {
+void cancelWorkers(void) {
 	ListCell * lc;
 	Worker * worker;
 	ereport(LOG,(errmsg("Master: cancel workers")));
