@@ -99,7 +99,7 @@ MemoryContext ShmContextCreate(MemoryContext parent, const char * name,
 	// top node or next child?
 	if (parent == NULL) {
 		char * mmAreaName = "magicString";
-		unsigned long int sizeOfArea = 1024*1024*10;
+		unsigned long int sizeOfArea = 1024*1024*200;
 		shmCtx->mm = mm_create(sizeOfArea, mmAreaName);
 		shmCtx->isTop = true;
 	} else {
@@ -146,19 +146,10 @@ static void * ShmAlloc(MemoryContext context, Size size) {
 	ctx->box->blocks = block;
 	SpinLockRelease(&ctx->box->mutex);
 	RESUME_INTERRUPTS();
-	/*
-	AllocBlock tracer = NULL;
-	tracer = ctx->box->blocks;
-	while (tracer != NULL) {
-		ereport(LOG,(errmsg("alloc blockx %p", tracer)));
-		tracer = tracer->next;
-	}
-	*/
 	
 	return AllocChunkGetPointer(chunk);
 }
 
-// TODO zmenit na obojstranny spojak aby som to zbytocne stale nepreliezal ...
 static void ShmFreeAlloc(MemoryContext context, void * pointer) {
 	ShmCtx ctx = (ShmCtx) context;
 	AllocChunk chunk = AllocPointerGetChunk(pointer);
@@ -169,8 +160,6 @@ static void ShmFreeAlloc(MemoryContext context, void * pointer) {
 	b = ctx->box->blocks;
 	// head of list 
 	if (b == block) {
-		//ereport(LOG,(errmsg("happy freeing")));
-		// it is first so it is easy
 		if (block->next != NULL) {
 			// it is not alone
 			ctx->box->blocks = block->next;
@@ -178,20 +167,8 @@ static void ShmFreeAlloc(MemoryContext context, void * pointer) {
 		} else {
 			ctx->box->blocks = NULL;
 		}	
-		
-		/*
-		AllocBlock tracer = NULL; 
-		tracer = ctx->box->blocks;
-		while (tracer != NULL) {
-			ereport(LOG,(errmsg("cheerfull free blockx %p", tracer)));
-			tracer = tracer->next;
-		}
-		*/
-		//return;
 	} else {
-		//if (block->prev != NULL) {
-			block->prev->next = block->next;
-		//}
+		block->prev->next = block->next;
 		if (block->next != NULL) {
 			block->next->prev = block->prev;
 		}
@@ -201,21 +178,6 @@ static void ShmFreeAlloc(MemoryContext context, void * pointer) {
 	
 	mm_free(ctx->mm,(void *)block);
 	
-	
-	//while (b->next != block && b->next != NULL) {
-		//ereport(LOG,(errmsg("cheerfull free searching for blockx %p", b)));
-		//b = b->next;
-	//}
-	//if (b->next == NULL) {
-		//ereport(WARNING,(errmsg("Shared memory - block to be freed was not found in blocks list")));
-		//return;
-	//} else {
-		//ereport(LOG,(errmsg("happy freeing")));
-		//b->next = block->next;
-		//mm_free(ctx->mm,(void *)block);
-	//}
-	
-	//(*ShmParallelContext->methods->stats)(ShmParallelContext, 0);
 	return;
 }
 
@@ -223,8 +185,12 @@ static void ShmFreeAlloc(MemoryContext context, void * pointer) {
 // pointer je obaleny AllocBlokom ... 
 static void * ShmRealloc(MemoryContext context, void * pointer, Size size) {
 	ShmCtx ctx = (ShmCtx) context;
-	ereport(FATAL, (errmsg("NOT IMPLEMENTED!")));
-	return mm_realloc(ctx->mm, pointer, size);
+	
+	if (pointer == NULL) {
+		return mm_malloc(ctx->mm, size);
+	} else {
+		mm_free(ctx->mm, pointer);
+	}
 }
 
 static void ShmInit(MemoryContext context) {

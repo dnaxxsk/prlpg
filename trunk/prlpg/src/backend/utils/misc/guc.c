@@ -630,6 +630,14 @@ static struct config_bool ConfigureNamesBool[] =
 		false, NULL, NULL
 	},
 	{
+		{"prl_test", PGC_USERSET, PARALLEL_QUERY,
+			gettext_noop("Enables to testing in prl execution"),
+			NULL
+		},
+		&prl_test,
+		false, NULL, NULL
+	},
+	{
 		{"enable_indexscan", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of index-scan plans."),
 			NULL
@@ -1362,6 +1370,46 @@ static struct config_int ConfigureNamesInt[] =
 		},
 		&prl_sql_lvl,
 		2, 1, 128, NULL, NULL
+	},
+	{
+		{"prl_test_workers", PGC_USERSET, PARALLEL_QUERY,
+			gettext_noop("Workers in test"),
+			NULL
+		},
+		&prl_test_workers,
+		2, 1, 128, NULL, NULL
+	},
+	{
+		{"prl_test_cycles", PGC_USERSET, PARALLEL_QUERY,
+			gettext_noop("Cycles in test"),
+			NULL
+		},
+		&prl_test_cycles,
+		2, 1, INT_MAX, NULL, NULL
+	},
+	{
+		{"prl_test_type", PGC_USERSET, PARALLEL_QUERY,
+			gettext_noop("Test type"),
+			NULL
+		},
+		&prl_test_type,
+		1, 1, 10, NULL, NULL
+	},
+	{
+		{"prl_test_chunk_size", PGC_USERSET, PARALLEL_QUERY,
+			gettext_noop("Chunk size in test"),
+			NULL
+		},
+		&prl_test_chunk_size,
+		1000, 1, INT_MAX, NULL, NULL
+	},
+	{
+		{"prl_test_chunk_cnt", PGC_USERSET, PARALLEL_QUERY,
+			gettext_noop("Chunk count in test"),
+			NULL
+		},
+		&prl_test_chunk_cnt,
+		1000, 1, INT_MAX, NULL, NULL
 	},
 	{
 		{"parallel_shared_queue_size", PGC_USERSET, PARALLEL_QUERY,
