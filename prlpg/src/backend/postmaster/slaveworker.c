@@ -51,6 +51,7 @@ static volatile sig_atomic_t got_SIGHUP = false;
 static void SigHupHandler(SIGNAL_ARGS);
 static void doSort(WorkDef * work, Worker * worker);
 static void doQuery(WorkDef * work, Worker * worker);
+static void doTest(WorkDef * work, Worker * worker);
 void WorkerStatementCancelHandler(SIGNAL_ARGS);
 
 
@@ -106,20 +107,20 @@ int slaveBackendMain(WorkDef * work) {
 	
 	// wait one minute so i can attach if i want to ..
 	//pg_usleep(60*1000000L);
-	ereport(LOG,(errmsg("Worker: Initializing - step 1")));
+	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 1")));
 	set_ps_display("startup-slave", false);
 	
 	SetProcessingMode(InitProcessing);
 	am_slave_worker = true;
 	
-	ereport(LOG,(errmsg("Worker: Initializing - step 2")));
+	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 2")));
 	
 	//TODO - stack_base_ptr?
 	
 	pqsignal(SIGHUP, SigHupHandler);	/* set flag to read config file */
 	pqsignal(SIGINT, WorkerStatementCancelHandler);	/* cancel current query */
 	pqsignal(SIGTERM, die);		/* cancel current query and exit */
-	ereport(LOG,(errmsg("Worker: Initializing - step 3")));
+	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 3")));
 	/*
 	 * In a standalone backend, SIGQUIT can be generated from the keyboard
 	 * easily, while SIGTERM cannot, so we make both signals do die() rather
@@ -127,7 +128,7 @@ int slaveBackendMain(WorkDef * work) {
 	 */	
 	pqsignal(SIGQUIT, quickdie);	/* hard crash time */
 	pqsignal(SIGALRM, handle_sig_alarm);		/* timeout conditions */
-	ereport(LOG,(errmsg("Worker: Initializing - step 4")));
+	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 4")));
 	/*
 	 * Ignore failure to write to frontend. Note: if frontend closes
 	 * connection, we will notice it and exit cleanly when control next
@@ -139,7 +140,7 @@ int slaveBackendMain(WorkDef * work) {
 	//pqsignal(SIGUSR1, CatchupInterruptHandler);
 	//pqsignal(SIGUSR2, NotifyInterruptHandler);
 	pqsignal(SIGFPE, FloatExceptionHandler);
-	ereport(LOG,(errmsg("Worker: Initializing - step 5")));
+	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 5")));
 	/*
 	 * Reset some signals that are accepted by postmaster but not by backend
 	 */
@@ -150,11 +151,11 @@ int slaveBackendMain(WorkDef * work) {
 	sigdelset(&BlockSig, SIGQUIT);
 
 	PG_SETMASK(&BlockSig);		/* block everything except SIGQUIT */
-	ereport(LOG,(errmsg("Worker: Initializing - step 6")));
+	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 6")));
 	BaseInit();
-	ereport(LOG,(errmsg("Worker: Initializing - step 7")));
+	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 7")));
 	InitProcess();
-	ereport(LOG,(errmsg("Worker: Initializing - step 8")));
+	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 8")));
 	// po Inite uz mam pgproc so semaforom kde mozem cakat na pracu ...
 	// neprijimalo to SIGINT ked ho canceloval master
 	//sigaddset(&UnBlockSig, SIGINT);
@@ -164,9 +165,9 @@ int slaveBackendMain(WorkDef * work) {
 	//here I should get masters dbname and username
 	//ereport(DEBUG3,(errmsg_internal("InitPostgres")));
 	InitPostgres(NULL, work->workParams->databaseId, work->workParams->username, NULL);
-	ereport(LOG,(errmsg("Worker: Initializing - step 9")));
+	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 9")));
 	SetProcessingMode(NormalProcessing);
-	ereport(LOG,(errmsg("Worker: Initializing - step 10")));
+	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 10")));
 	/*
 	 * process any libraries that should be preloaded at backend start (this
 	 * likewise can't be done until GUC settings are complete)
@@ -271,9 +272,9 @@ int slaveBackendMain(WorkDef * work) {
 	PG_exception_stack = &local_sigjmp_buf;
 	
 	
-	if (InterruptHoldoffCount > 0) {
-		ereport(LOG,(errmsg("Signals blocked.")));
-	}
+//	if (InterruptHoldoffCount > 0) {
+//		ereport(LOG,(errmsg("Signals blocked.")));
+//	}
 	
 	waitForState(worker, PRL_WORKER_STATE_READY);
 		
@@ -289,13 +290,17 @@ int slaveBackendMain(WorkDef * work) {
 		ereport(DEBUG_PRL2,(errmsg("Worker: Job = QUERY")));
 		doQuery(work, worker);
 		ereport(DEBUG_PRL2,(errmsg("Worker: Job = QUERY - work done")));
+	} else if (work->workType == PRL_WORK_TYPE_TEST) {
+		ereport(DEBUG_PRL2,(errmsg("Worker: Job = TEST")));
+		doTest(work, worker);
+		ereport(DEBUG_PRL2,(errmsg("Worker: Job = TEST - work done")));
 	}
 	
-	ereport(LOG,(errmsg("Worker: wait till the end")));
+	ereport(DEBUG_PRL2,(errmsg("Worker: wait till the end")));
 	
 	waitForAndSet(worker, PRL_WORKER_STATE_END, PRL_WORKER_STATE_END_ACK);
 	
-	ereport(LOG,(errmsg("Worker: THE END")));
+	ereport(DEBUG_PRL2,(errmsg("Worker: THE END")));
 	
 	// remove me from masters list 
 	//shListRemove(worker->work->workParams->workersList, worker);
@@ -309,18 +314,18 @@ static void doSort(WorkDef * work, Worker * worker) {
 	Tuplesortstate *tuplesortstate;
 	SortParams * pars = work->workParams->sortParams;
 	BufferQueueCell * bqc;
-	ereport(LOG,(errmsg("Worker-doSort: start begin_heap")));
+	ereport(DEBUG_PRL2,(errmsg("Worker-doSort: start begin_heap")));
 
 	tuplesortstate = tuplesort_begin_heap(pars->tupDesc, pars->numCols,
 			pars->sortColIdx, pars->sortOperators, pars->nullsFirst, work_mem,
 			pars->randomAccess);
-	ereport(LOG,(errmsg("Worker-doSort: before set_bound")));
+	ereport(DEBUG_PRL2,(errmsg("Worker-doSort: before set_bound")));
 	if (pars->bounded) {
 		tuplesort_set_bound(tuplesortstate, pars->bound);
 	}
 	
 	// here put all from shared buffer queue until last one ...
-	ereport(LOG,(errmsg("Worker - doSort - before receiving tuples")));
+	ereport(DEBUG_PRL2,(errmsg("Worker - doSort - before receiving tuples")));
 	while ((bqc = bufferQueueGet(work->workParams->bufferQueue, true))) {
 		if (bqc->last) {
 			ereport(LOG,(errmsg("Worker - doSort - received last")));
@@ -340,19 +345,19 @@ static void doSort(WorkDef * work, Worker * worker) {
 	
 	printGetUsage();
 	
-	ereport(LOG,(errmsg("Worker-doSort: before performsort")));
+	ereport(DEBUG_PRL2,(errmsg("Worker-doSort: before performsort")));
 	tuplesort_performsort(tuplesortstate);
 	
 	// here send them all back - well better would be to send them as one final run so the master can perform the final merge on its own
 	// and reuse these workers for another job 
-	ereport(LOG,(errmsg("Worker-doSort: after performsort")));
+	ereport(DEBUG_PRL2,(errmsg("Worker-doSort: after performsort")));
 	
 	//pg_usleep(30 * 1000000L);
-	ereport(LOG,(errmsg("Worker-doSort: after performsort - after sleep")));
+	ereport(DEBUG_PRL2,(errmsg("Worker-doSort: after performsort - after sleep")));
 	if (InterruptHoldoffCount > 0) {
-		ereport(LOG,(errmsg("Worker - Signals blocked.")));
+		ereport(DEBUG_PRL2,(errmsg("Worker - Signals blocked.")));
 	} else {
-		ereport(LOG,(errmsg("Worker - Signals OK.")));
+		ereport(DEBUG_PRL2,(errmsg("Worker - Signals OK.")));
 	}
 	
 	// tell the master that we have finished
@@ -375,7 +380,7 @@ static void doSort(WorkDef * work, Worker * worker) {
 			bqc->ptr_value = (void *)pstup;
 			if (bufferQueueAdd(work->workParams->bufferQueue, bqc, true)) {
 				// in LIMIT CLAUSE the receiver will not want more at some point
-				ereport(LOG,(errmsg("Worker-doSort - noticed that master does not want more tuples.")));
+				ereport(DEBUG_PRL2,(errmsg("Worker-doSort - noticed that master does not want more tuples.")));
 				break;
 			}
 		} else {
@@ -383,14 +388,14 @@ static void doSort(WorkDef * work, Worker * worker) {
 			pfree(pstup);
 			bufferQueueAdd(work->workParams->bufferQueue, bqc, true);
 			// leave the never ending cycle after sending last tuple
-			ereport(LOG,(errmsg("Worker-doSort - NOT noticed .. sending last one")));
+			ereport(DEBUG_PRL2,(errmsg("Worker-doSort - NOT noticed .. sending last one")));
 			break;
 		}
 	}
 	printAddUsage();
 	MemoryContextSwitchTo(oldContext);
 	
-	ereport(LOG,(errmsg("Worker-doSort: end")));
+	ereport(DEBUG_PRL2,(errmsg("Worker-doSort: end")));
 }
 
 static void doQuery(WorkDef * work, Worker * worker) {
@@ -472,4 +477,164 @@ static void
 SigHupHandler(SIGNAL_ARGS)
 {
 	got_SIGHUP = true;
+}
+
+static void doTest(WorkDef * work, Worker * worker) {
+	TestParams * pars = work->workParams->testParams;
+	int i = 0, j = 0;
+	long int duration_u = 0;
+	long int duration_s = 0;
+	
+	long int duration_u2 = 0;
+	long int duration_s2 = 0;
+	struct timeval tv;
+	if (pars->type == 1) {
+		MemoryContext testContext = AllocSetContextCreate(TopMemoryContext,	"TestContext",	ALLOCSET_DEFAULT_MINSIZE,	ALLOCSET_DEFAULT_INITSIZE,	ALLOCSET_DEFAULT_MAXSIZE);
+		MemoryContext oldContext;
+		oldContext = MemoryContextSwitchTo(testContext);
+		
+		gettimeofday(&tv, NULL);
+		duration_u = tv.tv_usec;
+		duration_s = tv.tv_sec;
+		for (i = 0; i < pars->cycles; i++) {
+			char ** array;
+			gettimeofday(&tv, NULL);
+			duration_u2 = tv.tv_usec;
+			duration_s2 = tv.tv_sec;
+			
+			array = palloc0(pars->chunk_cnt * sizeof(char *));
+			for (j = 0; j < pars->chunk_cnt; j++) {
+				array[j] = palloc0(pars->chunk_size * sizeof(char));
+			}
+
+			gettimeofday(&tv, NULL);
+			duration_s2 = tv.tv_sec - duration_s2; 
+			duration_u2 = duration_s2 * 1000000 + tv.tv_usec - duration_u2;
+			ereport(LOG,(errmsg("Worker-doTest alloc n.%d, Cycle=%d, chunks=%d of size=%d took %ld.%06ld seconds", 
+							pars->type, i, pars->chunk_cnt, pars->chunk_size, duration_u2 / 1000000, duration_u2 % 1000000)));
+			
+			gettimeofday(&tv, NULL);
+			duration_u2 = tv.tv_usec;
+			duration_s2 = tv.tv_sec;
+			
+			for (j = 0; j < pars->chunk_cnt; j++) {
+				pfree(array[j]);
+			}
+			pfree(array);
+			
+			gettimeofday(&tv, NULL);
+			duration_s2 = tv.tv_sec - duration_s2; 
+			duration_u2 = duration_s2 * 1000000 + tv.tv_usec - duration_u2;
+			ereport(LOG,(errmsg("Worker-doTest free n.%d, Cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds", 
+							pars->type, i, pars->chunk_cnt, pars->chunk_size, duration_u2 / 1000000, duration_u2 % 1000000)));
+		}
+		gettimeofday(&tv, NULL);
+		duration_s = tv.tv_sec - duration_s; 
+		duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
+		ereport(LOG,(errmsg("Worker-doTest n.%d, cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds", 
+				pars->type, pars->cycles, pars->chunk_cnt, pars->chunk_size, duration_u / 1000000, duration_u % 1000000)));
+		MemoryContextSwitchTo(oldContext);
+	} else if (pars->type == 2) {
+		MemoryContext testContext = ShmParallelContext;
+		MemoryContext oldContext;
+		oldContext = MemoryContextSwitchTo(testContext);
+
+		gettimeofday(&tv, NULL);
+		duration_u = tv.tv_usec;
+		duration_s = tv.tv_sec;
+		for (i = 0; i < pars->cycles; i++) {
+			char ** array;
+			gettimeofday(&tv, NULL);
+			duration_u2 = tv.tv_usec;
+			duration_s2 = tv.tv_sec;
+
+			array = palloc0(pars->chunk_cnt * sizeof(char *));
+			for (j = 0; j < pars->chunk_cnt; j++) {
+				array[j] = palloc0(pars->chunk_size * sizeof(char));
+			}
+
+			gettimeofday(&tv, NULL);
+			duration_s2 = tv.tv_sec - duration_s2;
+			duration_u2 = duration_s2 * 1000000 + tv.tv_usec - duration_u2;
+			ereport(LOG,(errmsg("Worker-doTest alloc n.%d, Cycle=%d, chunks=%d of size=%d took %ld.%06ld seconds",
+									pars->type, i, pars->chunk_cnt, pars->chunk_size, duration_u2 / 1000000, duration_u2 % 1000000)));
+
+			gettimeofday(&tv, NULL);
+			duration_u2 = tv.tv_usec;
+			duration_s2 = tv.tv_sec;
+
+			for (j = 0; j < pars->chunk_cnt; j++) {
+				pfree(array[j]);
+			}
+			pfree(array);
+
+			gettimeofday(&tv, NULL);
+			duration_s2 = tv.tv_sec - duration_s2; 
+			duration_u2 = duration_s2 * 1000000 + tv.tv_usec - duration_u2;
+			ereport(LOG,(errmsg("Worker-doTest free n.%d, Cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds",
+									pars->type, i, pars->chunk_cnt, pars->chunk_size, duration_u2 / 1000000, duration_u2 % 1000000)));
+		}
+		gettimeofday(&tv, NULL);
+		duration_s = tv.tv_sec - duration_s; 
+		duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
+		ereport(LOG,(errmsg("Worker-doTest n.%d, cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds",
+								pars->type, pars->cycles, pars->chunk_cnt, pars->chunk_size, duration_u / 1000000, duration_u % 1000000)));
+		MemoryContextSwitchTo(oldContext);
+	} else if (pars->type == 3) {
+		MemoryContext testContext = ShmParallelContext;
+		MemoryContext oldContext;
+		oldContext = MemoryContextSwitchTo(testContext);
+
+		gettimeofday(&tv, NULL);
+		duration_u = tv.tv_usec;
+		duration_s = tv.tv_sec;
+		for (i = 0; i < pars->cycles; i++) {
+			char ** array;
+			gettimeofday(&tv, NULL);
+			duration_u2 = tv.tv_usec;
+			duration_s2 = tv.tv_sec;
+
+			// trick - realloc is just mm-malloc
+			array = ShmParallelContext->methods->realloc(ShmParallelContext, NULL, pars->chunk_cnt * sizeof(char *));
+			for (j = 0; j < pars->chunk_cnt; j++) {
+				array[j] = ShmParallelContext->methods->realloc(ShmParallelContext, NULL, pars->chunk_size * sizeof(char));
+			}
+
+			gettimeofday(&tv, NULL);
+			duration_s2 = tv.tv_sec - duration_s2;
+			duration_u2 = duration_s2 * 1000000 + tv.tv_usec - duration_u2;
+			ereport(LOG,(errmsg("Worker-doTest alloc n.%d, Cycle=%d, chunks=%d of size=%d took %ld.%06ld seconds",
+									pars->type, i, pars->chunk_cnt, pars->chunk_size, duration_u2 / 1000000, duration_u2 % 1000000)));
+
+			gettimeofday(&tv, NULL);
+			duration_u2 = tv.tv_usec;
+			duration_s2 = tv.tv_sec;
+
+			for (j = 0; j < pars->chunk_cnt; j++) {
+				//pfree(array[j]);
+				ShmParallelContext->methods->realloc(ShmParallelContext, array[j], 0);
+			}
+			ShmParallelContext->methods->realloc(ShmParallelContext, array, 0);
+			//pfree(array);
+
+			gettimeofday(&tv, NULL);
+			duration_s2 = tv.tv_sec - duration_s2;
+			duration_u2 = duration_s2 * 1000000 + tv.tv_usec - duration_u2;
+			ereport(LOG,(errmsg("Worker-doTest free n.%d, Cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds",
+									pars->type, i, pars->chunk_cnt, pars->chunk_size, duration_u2 / 1000000, duration_u2 % 1000000)));
+		}
+		gettimeofday(&tv, NULL);
+		duration_s = tv.tv_sec - duration_s;
+		duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
+		ereport(LOG,(errmsg("Worker-doTest n.%d, cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds",
+								pars->type, pars->cycles, pars->chunk_cnt, pars->chunk_size, duration_u / 1000000, duration_u % 1000000)));
+		MemoryContextSwitchTo(oldContext);
+	}
+	
+	// finished
+	SpinLockAcquire(&worker->mutex);
+	worker->state = PRL_WORKER_STATE_FINISHED;
+	SpinLockRelease(&worker->mutex);
+	
+	return;
 }

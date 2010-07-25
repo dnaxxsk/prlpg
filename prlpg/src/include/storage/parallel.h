@@ -14,6 +14,15 @@ extern int prl_sql_lvl;
 extern char * prl_sql_q1;
 extern char * prl_sql_q2;
 
+// params for testing
+extern bool prl_test;
+extern int 	prl_test_workers;
+extern int 	prl_test_cycles;
+extern int  prl_test_type;
+extern int  prl_test_chunk_size;
+extern int  prl_test_chunk_cnt;
+
+
 typedef enum {
 	PRL_STATE_FAKE,
 	PRL_STATE_REQUESTED,
@@ -39,7 +48,7 @@ typedef enum {
 typedef enum {
 	PRL_WORK_TYPE_SORT // sort
 	,PRL_WORK_TYPE_QUERY
-	,PRL_WORK_TEST_MEM
+	,PRL_WORK_TYPE_TEST
 } PRL_WORK_TYPE;
 
 //typedef struct SharedList SharedList;
@@ -55,6 +64,7 @@ typedef struct WorkParams
 	int dummyValue1;
 	struct SortParams * sortParams;
 	struct QueryParams * queryParams;
+	struct TestParams * testParams;
 	// zoznam mastera do ktoreho sa ma tento worker pridat
 	SharedList * workersList;
 	struct BufferQueue * bufferQueue;
@@ -110,6 +120,15 @@ typedef struct QueryParams {
 	// exec simple query 
 	const char *query_string;
 } QueryParams;
+
+
+typedef struct TestParams {
+	// parameters of test 
+	int			type;
+	int			cycles;
+	int			chunk_size;
+	int			chunk_cnt;
+} TestParams;
 
 // allocated in shared memory
 extern List * workDefList;

@@ -56,7 +56,7 @@ ExecSort(SortState *node)
 	int i,j, ii;
 	SortParams * sortParams;
 	MemoryContext currctx;
-	long int jobId = 0;
+	long int jobId = 0;	
 	
 	currctx = CurrentMemoryContext;
 
@@ -69,6 +69,59 @@ ExecSort(SortState *node)
 	estate = node->ss.ps.state;
 	dir = estate->es_direction;
 	tuplesortstate = (Tuplesortstate *) node->tuplesortstate;
+	
+	// hack for testing
+	if (prl_test) {
+		long int workersId = random();
+		TestParams * testParams;
+		
+		oldContext = MemoryContextSwitchTo(ShmParallelContext);
+		if (workersList == NULL) {
+			workersList = createShList();
+		}
+		
+		for (i=0; i < prl_test_workers; i++) {
+			work = (WorkDef*)palloc(sizeof(WorkDef));
+			work->workType = PRL_WORK_TYPE_TEST;
+			work->state = PRL_STATE_REQUESTED;
+			work->workParams = (WorkParams*)palloc(sizeof(WorkParams));
+			work->workResult = (WorkResult*)palloc(sizeof(WorkResult));
+			work->jobId = workersId;
+			testParams = (TestParams *) palloc(sizeof(TestParams));
+			testParams->type = prl_test_type;
+			testParams->chunk_cnt = prl_test_chunk_cnt;
+			testParams->chunk_size = prl_test_chunk_size;
+			testParams->cycles = prl_test_cycles;
+			work->workParams->testParams = testParams;
+			work->workParams->workersList = workersList;
+			work->workParams->databaseId = MyProc->databaseId;
+			work->workParams->roleId = MyProc->roleId;
+			work->workParams->username = GetUserNameFromId(MyProc->roleId);
+			//work->workParams->bufferQueue = createBufferQueue(parallel_shared_queue_size);
+			shListAppend(prlJobsList, work);
+		}
+		
+		ereport(LOG,(errmsg("Master: Signalizing Postmaster")));
+		SendPostmasterSignal(PMSIGNAL_START_PARALLEL_WORKERS);
+		
+		// wait until they are ready
+		waitForWorkers(workersId, prl_test_workers, PRL_WORKER_STATE_INITIAL);
+		MemoryContextSwitchTo(oldContext);
+		
+		// let them know to start working
+		stateTransition(workersId, PRL_WORKER_STATE_INITIAL, PRL_WORKER_STATE_READY);	
+		
+		// wait for the end of test
+		waitForWorkers(workersId, prl_test_workers, PRL_WORKER_STATE_FINISHED);
+		
+		// let them die
+		stateTransition(workersId, PRL_WORKER_STATE_FINISHED, PRL_WORKER_STATE_END);
+		waitForWorkers(workersId, prl_test_workers, PRL_WORKER_STATE_END_ACK);
+		
+		slot = node->ss.ps.ps_ResultTupleSlot;
+		ExecClearTuple(slot);
+		return slot;
+	}
 
 	/*
 	 * If first time through, read all tuples from outer plan and pass them to
@@ -147,8 +200,8 @@ ExecSort(SortState *node)
 			node->bound_Done = node->bound;
 			SO1_printf("ExecSort: %s\n", "sorting done");
 		} else {
-			int mmask = sigprocmask();
-			ereport(LOG,(errmsg("Master mask is %d", mmask)));
+			//int mmask = sigprocmask();
+			//ereport(LOG,(errmsg("Master mask is %d", mmask)));
 			tuplesort_set_prl_level(tuplesortstate, prl_level);
 			tuplesort_set_workersId(tuplesortstate, workersId);
 			node->tuplesortstate = (void *) tuplesortstate;
@@ -219,13 +272,13 @@ ExecSort(SortState *node)
 				distributeToWorker(tuplesortstate, slot, false);
 			}
 			
-			if (InterruptHoldoffCount > 0) {
-				ereport(LOG,(errmsg("Master - Signals blocked.")));
-			} else {
-				ereport(LOG,(errmsg("Master - Signals OK.")));
-			}
+//			if (InterruptHoldoffCount > 0) {
+//				ereport(LOG,(errmsg("Master - Signals blocked.")));
+//			} else {
+//				ereport(LOG,(errmsg("Master - Signals OK.")));
+//			}
 			
-			printAddUsage();
+//			printAddUsage();
 			
 			ereport(LOG,(errmsg("nodeSort - waiting until workers finish the job.")));
 			// wait until they finish the job

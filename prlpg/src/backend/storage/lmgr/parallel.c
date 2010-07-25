@@ -29,6 +29,13 @@ int prl_sql_lvl = 2;
 char * prl_sql_q1 = NULL;
 char * prl_sql_q2 = NULL;
 
+bool prl_test = false;
+int prl_test_workers = -1;
+int prl_test_cycles = -1;
+int  prl_test_type = -1;
+int  prl_test_chunk_size = -1;
+int  prl_test_chunk_cnt = -1;
+
 // poziadavky na zalozenie novych workerov pre postmastra
 SharedList * prlJobsList;
 SharedList * workersToCancel;
