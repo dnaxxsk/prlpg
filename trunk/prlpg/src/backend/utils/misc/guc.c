@@ -1420,6 +1420,14 @@ static struct config_int ConfigureNamesInt[] =
 		50, 1, INT_MAX, NULL, NULL
 	},
 	{
+		{"prl_wait_time", PGC_USERSET, PARALLEL_QUERY,
+			gettext_noop("Active waiting sleep (ums - microseconds)"),
+			NULL
+		},
+		&prl_test_cycles,
+		100000, 1, INT_MAX, NULL, NULL
+	},
+	{
 		{"geqo_effort", PGC_USERSET, QUERY_TUNING_GEQO,
 			gettext_noop("GEQO: effort is used to set the default for other GEQO parameters."),
 			NULL
