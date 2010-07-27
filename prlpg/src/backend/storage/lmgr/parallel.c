@@ -28,6 +28,7 @@ bool prl_sql = false;
 int prl_sql_lvl = 2;
 char * prl_sql_q1 = NULL;
 char * prl_sql_q2 = NULL;
+int prl_wait_time = 1;
 
 bool prl_test = false;
 int prl_test_workers = -1;
@@ -389,7 +390,7 @@ bool waitForWorkers(long int jobId, int workersCnt, PRL_WORKER_STATE state) {
 			SpinLockRelease(&worker->mutex);
 		}
 		SpinLockRelease(&workersList->mutex);
-		pg_usleep(100000L);
+		pg_usleep(prl_wait_time);
 		CHECK_FOR_INTERRUPTS();
 	}
 	return true;
@@ -410,7 +411,7 @@ bool waitForAllWorkers(PRL_WORKER_STATE state) {
 				notEnd = true;
 			}
 			SpinLockRelease(&worker->mutex);
-			pg_usleep(100000);
+			pg_usleep(prl_wait_time);
 		}
 		SpinLockRelease(&workersList->mutex);
 	}
@@ -498,7 +499,7 @@ void waitForState(Worker * worker, PRL_WORKER_STATE state) {
 		} else {
 			SpinLockRelease(&worker->mutex);
 		}
-		pg_usleep(100000L);
+		pg_usleep(prl_wait_time);
 	}
 }
 
@@ -516,7 +517,7 @@ void waitForAndSet(Worker * worker, PRL_WORKER_STATE state, PRL_WORKER_STATE new
 		} else {
 			SpinLockRelease(&worker->mutex);
 		}
-		pg_usleep(100000L);
+		pg_usleep(prl_wait_time);
 	}
 } 
 
