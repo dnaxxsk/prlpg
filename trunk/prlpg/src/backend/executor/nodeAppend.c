@@ -64,7 +64,7 @@
 #include "storage/proc.h"
 #include "storage/procsignal.h"
 #include "storage/pmsignal.h"
-
+#include "postmaster/slaveworker.h"
 #include "storage/parallel.h"
 #include "utils/memutils.h"
 
@@ -210,8 +210,10 @@ ExecAppend(AppendState *node)
 		char * prlSqlQ1 = prl_sql_q1; 
 		char * prlSqlQ2 = prl_sql_q2;
 		pas = (PrlAppendState *) palloc0(sizeof(PrlAppendState));
-		pas->prlOn = isPrlSqlOn;
+		pas->prlOn = isPrlSqlOn && !isSlaveWorker();
 		node->prl_append_state = (void *) pas;
+		
+		ereport(LOG,(errmsg("NodeAppend - start.")));
 		
 		if (isPrlSqlOn) {
 			long int jobId = random();
@@ -268,13 +270,19 @@ ExecAppend(AppendState *node)
 	}
 	pas = (PrlAppendState *) node->prl_append_state;
 	
-	if (pas->prlOn) {
+	if (pas->prlOn && !isSlaveWorker()) {
 		int i = pas->lastWorker;
 		int j = 0;
+		int cycles = 0;
 		BufferQueueCell * bqc;
 		MinimalTuple tup;
 		
 		for(;;) {
+			if (cycles == pas->workersCnt) {
+				// we dont want to mindlessly check it all the time 
+				cycles = 0;
+				pg_usleep(prl_wait_time);
+			}
 			// check the end
 			bool end= true;
 			for (j = 0; j < pas->workersCnt; ++j) {
@@ -306,6 +314,7 @@ ExecAppend(AppendState *node)
 					}
 				}
 			}
+			++cycles;
 		}
 	} else {
 		for (;;)
@@ -346,6 +355,7 @@ ExecAppend(AppendState *node)
 				return ExecClearTuple(node->ps.ps_ResultTupleSlot);
 	
 			/* Else loop back and try to get a tuple from the new subplan */
+			ereport(LOG,(errmsg("NodeAppend - going for next subplan")));
 		}
 	}
 }
