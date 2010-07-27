@@ -4316,8 +4316,6 @@ static void forkSlave(WorkDef * work) {
 		MemoryContextDelete(PostmasterContext);
 		PostmasterContext = NULL;
 		
-		//pg_usleep(60*1000000);
-		
 		/* And run the backend */
 		proc_exit(slaveBackendMain(work));
 	}
