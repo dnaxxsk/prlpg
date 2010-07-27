@@ -24,6 +24,7 @@
 #include "storage/proc.h"
 #include "storage/pmsignal.h"
 #include "storage/parallel.h"
+#include "postmaster/slaveworker.h"
 
 #include <pthread.h>
 
@@ -52,7 +53,7 @@ ExecSort(SortState *node)
 	WorkDef * work;
 	//guc variable
 	int prl_level = parallel_sort_level;
-	bool prl_on = parallel_execution_allowed;
+	bool prl_on = parallel_execution_allowed && !isSlaveWorker();
 	int i,j, ii;
 	SortParams * sortParams;
 	MemoryContext currctx;
@@ -71,7 +72,7 @@ ExecSort(SortState *node)
 	tuplesortstate = (Tuplesortstate *) node->tuplesortstate;
 	
 	// hack for testing
-	if (prl_test) {
+	if (prl_test && !isSlaveWorker()) {
 		long int workersId = random();
 		TestParams * testParams;
 		
