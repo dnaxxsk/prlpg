@@ -981,22 +981,15 @@ tuplesort_puttupleslot_prl(Tuplesortstate *state, PrlSortTuple *slot)
 	MemoryContextSwitchTo(oldcontext);
 }
 
-PrlSortTuple * tuplesort_prl_puttupleslot(Tuplesortstate * state, TupleTableSlot * slot
-		) {
-	//MemoryContext oldcontext = MemoryContextSwitchTo(state->sortcontext);
-	//SortTuple	stup;
+PrlSortTuple * tuplesort_prl_puttupleslot(Tuplesortstate * state, TupleTableSlot * slot)
+{
 	PrlSortTuple * stup = (PrlSortTuple *)palloc0(sizeof(PrlSortTuple));
-//	ereport(DEBUG1,(errmsg("Master - tuplesort_prl_puttupleslot - right after palloc %ld", stup->datum1)));
 	/*
 	 * Copy the given tuple into memory we control, and decrease availMem.
 	 * Then call the common code.
 	 */
 	COPYTUP(state, (SortTuple *)stup, (void *) slot);
-//	ereport(DEBUG1,(errmsg("Master - tuplesort_prl_puttupleslot - after COPYTUP %ld", stup->datum1)));
-
-	//puttuple_common(state, &stup);
 	return stup;
-	//MemoryContextSwitchTo(oldcontext);
 }
 
 /*

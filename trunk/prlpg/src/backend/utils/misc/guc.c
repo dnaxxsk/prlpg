@@ -638,6 +638,14 @@ static struct config_bool ConfigureNamesBool[] =
 		false, NULL, NULL
 	},
 	{
+		{"prl_prealloc_queue", PGC_USERSET, PARALLEL_QUERY,
+			gettext_noop("Enables preallocation of memory in bufferQueue"),
+			NULL
+		},
+		&prl_prealloc_queue,
+		false, NULL, NULL
+	},
+	{
 		{"enable_indexscan", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of index-scan plans."),
 			NULL
@@ -1426,6 +1434,14 @@ static struct config_int ConfigureNamesInt[] =
 		},
 		&prl_test_cycles,
 		100000, 1, INT_MAX, NULL, NULL
+	},
+	{
+		{"prl_queue_item_size", PGC_USERSET, PARALLEL_QUERY,
+			gettext_noop("Preallocated size of items in shared memory queue."),
+			NULL
+		},
+		&prl_queue_item_size,
+		1000, 10, INT_MAX, NULL, NULL
 	},
 	{
 		{"geqo_effort", PGC_USERSET, QUERY_TUNING_GEQO,

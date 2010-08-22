@@ -9,6 +9,7 @@ extern bool parallel_sort_allowed;
 extern int parallel_sort_level;
 extern int parallel_shared_queue_size;
 extern int prl_wait_time;
+extern int prl_queue_item_size;
 
 extern bool prl_sql;
 extern int prl_sql_lvl;
@@ -22,6 +23,9 @@ extern int 	prl_test_cycles;
 extern int  prl_test_type;
 extern int  prl_test_chunk_size;
 extern int  prl_test_chunk_cnt;
+
+extern bool prl_prealloc_queue;
+extern int prl_queue_item_size;
 
 typedef enum {
 	PRL_STATE_FAKE,
@@ -157,6 +161,9 @@ typedef struct BufferQueue
 	int init_size;
 	int size;
 	bool stop;
+	int first;
+	int next;
+	void ** data;
 } BufferQueue;
 
 struct BufferQueueCell
@@ -164,6 +171,7 @@ struct BufferQueueCell
 	void	   *ptr_value;
 	BufferQueueCell   *next;
 	bool last;
+	int size;
 };
 
 extern BufferQueue * createBufferQueue(int buffer_size);
