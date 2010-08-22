@@ -37,6 +37,9 @@ int  prl_test_type = -1;
 int  prl_test_chunk_size = -1;
 int  prl_test_chunk_cnt = -1;
 
+bool prl_prealloc_queue = false;
+int prl_queue_item_size = -1;
+
 // poziadavky na zalozenie novych workerov pre postmastra
 SharedList * prlJobsList;
 SharedList * workersToCancel;
@@ -164,6 +167,11 @@ BufferQueue * createBufferQueue(int buffer_size) {
 
 	bq->head = NULL;
 	bq->tail = NULL;
+	
+	if (prl_prealloc_queue) {
+		
+	}
+	
 	ereport(DEBUG1,(errmsg("Parallel.c - create buffer queue - end")));
 	return bq;
 }
