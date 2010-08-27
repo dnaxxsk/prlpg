@@ -1,5 +1,5 @@
 /*-------------------------------------------------------------------------
- *
+ *   asa
  * heaptuple.c
  *	  This file contains heap tuple accessor and mutator routines, as well
  *	  as various tuple utilities.
