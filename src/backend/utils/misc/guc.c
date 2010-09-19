@@ -646,6 +646,14 @@ static struct config_bool ConfigureNamesBool[] =
 		false, NULL, NULL
 	},
 	{
+		{"prl_test2", PGC_USERSET, PARALLEL_QUERY,
+			gettext_noop("Enables to testing #2 in prl execution"),
+			NULL
+		},
+		&prl_test2,
+		false, NULL, NULL
+	},
+	{
 		{"enable_indexscan", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of index-scan plans."),
 			NULL
@@ -1442,6 +1450,14 @@ static struct config_int ConfigureNamesInt[] =
 		},
 		&prl_queue_item_size,
 		1000, 10, INT_MAX, NULL, NULL
+	},
+	{
+		{"prl_test2_cnt", PGC_USERSET, PARALLEL_QUERY,
+			gettext_noop("Count in test #2"),
+			NULL
+		},
+		&prl_test2_cnt,
+		1000, 1, INT_MAX, NULL, NULL
 	},
 	{
 		{"geqo_effort", PGC_USERSET, QUERY_TUNING_GEQO,

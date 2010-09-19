@@ -18,6 +18,7 @@
 #include "access/tupmacs.h"
 #include "storage/itemptr.h"
 #include "storage/relfilenode.h"
+#include "storage/parallel.h"
 
 /*
  * MaxTupleAttributeNumber limits the number of (user) columns in a tuple.

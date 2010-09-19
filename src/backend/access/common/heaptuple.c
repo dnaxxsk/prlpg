@@ -1,5 +1,5 @@
 /*-------------------------------------------------------------------------
- *   asa
+ *
  * heaptuple.c
  *	  This file contains heap tuple accessor and mutator routines, as well
  *	  as various tuple utilities.
@@ -1536,3 +1536,4 @@ minimal_tuple_from_heap_tuple(HeapTuple htup)
 	result->t_len = len;
 	return result;
 }
+

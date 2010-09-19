@@ -68,6 +68,7 @@
 #include "storage/parallel.h"
 #include "utils/memutils.h"
 
+
 static bool exec_append_initialize_next(AppendState *appendstate);
 static void registerWorkers(PrlAppendState * state, int prl_level);
 
@@ -278,13 +279,15 @@ ExecAppend(AppendState *node)
 		MinimalTuple tup;
 		
 		for(;;) {
+			bool end= true;
+			
 			if (cycles == pas->workersCnt) {
 				// we dont want to mindlessly check it all the time 
 				cycles = 0;
 				pg_usleep(prl_wait_time);
 			}
+			
 			// check the end
-			bool end= true;
 			for (j = 0; j < pas->workersCnt; ++j) {
 				if (!pas->workersFinished[j]) {
 					end = false;
@@ -295,22 +298,83 @@ ExecAppend(AppendState *node)
 				return ExecClearTuple(node->ps.ps_ResultTupleSlot);
 			}
 			
+			if (prl_test2) {
+				if (!prl_prealloc_queue) {
+					while (true) {
+						bqc = bufferQueueGet(pas->workers[0]->work->workParams->bufferQueue, true);
+						if (bqc != NULL) {
+							if (bqc->last) {
+								pas->workersFinished[i] = true;
+								pfree(bqc);
+								for (j = 0; j < pas->workersCnt; ++j) {
+									pas->workersFinished[j] = true;
+								}
+								return ExecClearTuple(node->ps.ps_ResultTupleSlot);
+							} else {
+								// just delete it 
+								tup = heap_copy_minimal_tuple(bqc->ptr_value);
+								pfree((MinimalTuple)bqc->ptr_value);
+								pfree(bqc);
+								pfree(tup);
+							}
+						}
+					}
+				} else {
+					while (true) {
+						bool last= false;
+						GetResult * res = bufferQueueGet2(
+								pas->workers[0]->work->workParams->bufferQueue,
+								true, &last);
+						if (res->last) {
+							pfree(res);
+							for (j = 0; j < pas->workersCnt; ++j) {
+								pas->workersFinished[j] = true;
+							}
+							return ExecClearTuple(node->ps.ps_ResultTupleSlot);
+						} else {
+							if (res->ptr != NULL) {
+								// not last and something returned
+								ExecStoreMinimalTuple(res->ptr,
+										node->ps.ps_ResultTupleSlot, true);
+								pfree(res);
+							}
+						}
+					}
+				}
+			}
+			
 			// posun na dalsieho, cyklicky
 			i = (i+1)% pas->workersCnt;
 			// ak este neskoncil
 			if (!pas->workersFinished[i]) {
-				bqc = bufferQueueGet(pas->workers[i]->work->workParams->bufferQueue, false);
-				if (bqc != NULL) {
-					if (bqc->last) {
+				if (!prl_prealloc_queue) {
+					bqc = bufferQueueGet(pas->workers[i]->work->workParams->bufferQueue, false);
+					if (bqc != NULL) {
+						if (bqc->last) {
+							pas->workersFinished[i] = true;
+							pfree(bqc);
+						} else {
+							pas->lastWorker = i;
+							tup = heap_copy_minimal_tuple(bqc->ptr_value);
+							ExecStoreMinimalTuple(tup, node->ps.ps_ResultTupleSlot, true);
+							pfree((MinimalTuple)bqc->ptr_value);
+							pfree(bqc);
+							return node->ps.ps_ResultTupleSlot;
+						}
+					}
+				} else {
+					bool last = false;
+					GetResult * res = bufferQueueGet2(pas->workers[i]->work->workParams->bufferQueue, false, &last);
+					if (res->last) {
 						pas->workersFinished[i] = true;
-						pfree(bqc);
+						pfree(res);
 					} else {
-						pas->lastWorker = i;
-						tup = heap_copy_minimal_tuple(bqc->ptr_value);
-						ExecStoreMinimalTuple(tup, node->ps.ps_ResultTupleSlot, true);
-						pfree((MinimalTuple)bqc->ptr_value);
-						pfree(bqc);
-						return node->ps.ps_ResultTupleSlot;
+						if (res->ptr != NULL) {
+							// not last and something returned
+							ExecStoreMinimalTuple(res->ptr, node->ps.ps_ResultTupleSlot, true);
+							pfree(res);
+							return node->ps.ps_ResultTupleSlot;
+						}
 					}
 				}
 			}

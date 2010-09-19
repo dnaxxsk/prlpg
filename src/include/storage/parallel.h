@@ -23,6 +23,8 @@ extern int 	prl_test_cycles;
 extern int  prl_test_type;
 extern int  prl_test_chunk_size;
 extern int  prl_test_chunk_cnt;
+extern bool prl_test2;
+extern int  prl_test2_cnt;
 
 extern bool prl_prealloc_queue;
 extern int prl_queue_item_size;
@@ -163,6 +165,7 @@ typedef struct BufferQueue
 	bool stop;
 	int first;
 	int next;
+	int start, end;
 	void ** data;
 } BufferQueue;
 
@@ -180,6 +183,15 @@ extern bool bufferQueueAdd(BufferQueue * bq, BufferQueueCell * cell, bool stopOn
 extern BufferQueueCell * bufferQueueGet(BufferQueue * bq, bool wait);
 extern BufferQueueCell * bufferQueueGetNoSem(BufferQueue * bq);
 extern bool bufferQueueSetStop(BufferQueue * bq, bool newStop);
+extern bool bufferQueueAdd2(BufferQueue * bq, void * slot, bool last, bool stopOnLast);
+
+typedef struct GetResult 
+{
+	bool last;
+	void * ptr;
+} GetResult;
+
+extern GetResult * bufferQueueGet2(BufferQueue * bq, bool wait, bool * last);
 
 typedef struct SEM_BOX {
 	SHM_QUEUE	links;
@@ -220,4 +232,9 @@ extern int stateTransition(long int jobId, PRL_WORKER_STATE oldState, PRL_WORKER
 extern void printAddUsage(void);
 extern void printGetUsage(void);
 
+// preallocating memory
+//extern void bufferQueueGet2(BufferQueue * bq, bool wait, bool * last);
+//extern bool bufferQueueAdd2(BufferQueue * bq, TupleTableSlot * slot, bool last, bool stopOnLast);
+extern void heap_form_minimal_tuple_prl(TupleDesc tupleDescriptor,
+						Datum *values, bool *isnull, BufferQueueCell * bqc);
 #endif

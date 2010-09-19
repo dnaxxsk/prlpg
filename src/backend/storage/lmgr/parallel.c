@@ -17,6 +17,9 @@
 #include "storage/pmsignal.h"
 #include "utils/memutils.h"
 #include "storage/shmem.h"
+#include "executor/tuptable.h"
+#include "access/tuptoaster.h"
+
 
 // global variables
 bool parallel_execution_allowed = false;
@@ -36,6 +39,8 @@ int prl_test_cycles = -1;
 int  prl_test_type = -1;
 int  prl_test_chunk_size = -1;
 int  prl_test_chunk_cnt = -1;
+bool prl_test2 = false;
+int prl_test2_cnt = -1;
 
 bool prl_prealloc_queue = false;
 int prl_queue_item_size = -1;
@@ -118,7 +123,7 @@ BufferQueue * createBufferQueue(int buffer_size) {
 
 	if (prlSemGlobal->freeSems != NULL) {
 		bq->spaces = prlSemGlobal->freeSems;
-		prlSemGlobal->freeSems = bq->spaces->links.next;
+		prlSemGlobal->freeSems = (SEM_BOX *)bq->spaces->links.next;
 	} else {
 		ereport(FATAL,
 				(errcode(ERRCODE_TOO_MANY_CONNECTIONS),
@@ -130,7 +135,7 @@ BufferQueue * createBufferQueue(int buffer_size) {
 	
 	if (prlSemGlobal->freeSems != NULL) {
 		bq->items = prlSemGlobal->freeSems;
-		prlSemGlobal->freeSems = bq->items->links.next;
+		prlSemGlobal->freeSems = (SEM_BOX *)bq->items->links.next;
 	} else {
 		ereport(FATAL,
 				(errcode(ERRCODE_TOO_MANY_CONNECTIONS),
@@ -141,7 +146,7 @@ BufferQueue * createBufferQueue(int buffer_size) {
 
 	if (prlSemGlobal->freeSems != NULL) {
 		bq->mutex = prlSemGlobal->freeSems;
-		prlSemGlobal->freeSems = bq->mutex->links.next;
+		prlSemGlobal->freeSems = (SEM_BOX *)bq->mutex->links.next;
 	} else {
 		ereport(FATAL,
 				(errcode(ERRCODE_TOO_MANY_CONNECTIONS),
@@ -169,7 +174,16 @@ BufferQueue * createBufferQueue(int buffer_size) {
 	bq->tail = NULL;
 	
 	if (prl_prealloc_queue) {
-		
+		bq->data = palloc((parallel_shared_queue_size+1) * sizeof(BufferQueueCell *));
+		for (i = 0; i < parallel_shared_queue_size+1; i++) {
+			BufferQueueCell * bqc =  (BufferQueueCell *) palloc(sizeof(BufferQueueCell));
+			bqc->last = false;
+			bqc->ptr_value = palloc(prl_queue_item_size);
+			bqc->size = prl_queue_item_size;
+			bq->data[i] = bqc;
+		}
+		bq->start = 0;
+		bq->end = 0;
 	}
 	
 	ereport(DEBUG1,(errmsg("Parallel.c - create buffer queue - end")));
@@ -193,24 +207,35 @@ void destroyBufferQueue(BufferQueue * bq) {
 	SpinLockAcquire(PrlSemLock);
 
 	// can link to each other but it is doesnt really matter ...
-	bq->items->links.next = prlSemGlobal->freeSems;
+	bq->items->links.next = (SHM_QUEUE *) prlSemGlobal->freeSems;
 	prlSemGlobal->freeSems = bq->items;
 
-	bq->mutex->links.next = prlSemGlobal->freeSems;
+	bq->mutex->links.next = (SHM_QUEUE *) prlSemGlobal->freeSems;
 	prlSemGlobal->freeSems = bq->mutex;
 
-	bq->spaces->links.next = prlSemGlobal->freeSems;
+	bq->spaces->links.next = (SHM_QUEUE *) prlSemGlobal->freeSems;
 	prlSemGlobal->freeSems = bq->spaces;
 
 	SpinLockRelease(PrlSemLock);
 	
-	if (bq->head != NULL ) {
+	if (prl_prealloc_queue) {
+		int i = 0;
+		for (i = 0; i < parallel_shared_queue_size+1; i++) {
+			pfree(((BufferQueueCell *)bq->data[i])->ptr_value);
+			pfree(bq->data[i]);
+		}
+		pfree(bq->data);
+	}
+	
+	if (bq->head != NULL) {
 		// problem
 		ereport(WARNING, (errcode(ERRCODE_OUT_OF_MEMORY),	errmsg("bufferqueue must be empty in destroy method")));
 	}
 
 	pfree(bq);
 }
+
+
 
 bool bufferQueueAdd(BufferQueue * bq, BufferQueueCell * cell, bool stopOnLast) {
 	struct timeval tv;
@@ -263,6 +288,38 @@ void printAddUsage(void) {
 void printGetUsage(void) {
 	ereport(LOG,(errmsg("Parallel.c - buffer queue GET usage %ld", getDuration) ));
 	getDuration = 0;
+}
+
+GetResult * bufferQueueGet2(BufferQueue * bq, bool wait, bool * last) {
+	GetResult * result = (GetResult *)palloc(sizeof(GetResult));
+	BufferQueueCell * bqc;
+	if (!wait) {
+		PGSemaphoreLock(&(bq->mutex->sem), true);
+		if (bq->size == 0) {
+			PGSemaphoreUnlock(&(bq->mutex->sem));
+			result->last = false;
+			result->ptr = NULL;
+			return result;
+		}
+		PGSemaphoreUnlock(&(bq->mutex->sem));
+	}
+	
+	PGSemaphoreLock(&(bq->items->sem), true);
+	PGSemaphoreLock(&(bq->mutex->sem), true);
+	bqc = bq->data[bq->start];
+	if (bqc->last) {
+		result->last = true; 
+	} else {
+		result->last = false;
+		result->ptr = heap_copy_minimal_tuple(bqc->ptr_value);
+	}
+	
+	bq->start = (bq->start+1) % (parallel_shared_queue_size + 1);
+	bq->size--;
+	PGSemaphoreUnlock(&(bq->mutex->sem));
+	PGSemaphoreUnlock(&(bq->spaces->sem));
+	
+	return result;
 }
 
 BufferQueueCell * bufferQueueGet(BufferQueue * bq, bool wait) {
@@ -538,4 +595,163 @@ bool bufferQueueSetStop(BufferQueue * bq, bool newStop) {
 	PGSemaphoreUnlock(&(bq->mutex->sem));
 	return result;
 }
+
+bool bufferQueueAdd2(BufferQueue * bq, void * slott, bool last, bool stopOnLast) {
+	TupleTableSlot * slot = (TupleTableSlot *) slott;
+	bool result;
+	BufferQueueCell * bqc = NULL;
+	PGSemaphoreLock(&(bq->spaces->sem), true);
+	PGSemaphoreLock(&(bq->mutex->sem), true);
+	
+	bqc = bq->data[bq->end];
+	bqc->last = last;
+	if (slott == NULL) {
+		// do nothing because there are no data
+	} else if (slot->tts_mintuple) {
+		MinimalTuple mtup = slot->tts_mintuple;
+		if (mtup->t_len <= bqc->size) {
+			memcpy(bqc->ptr_value, mtup, mtup->t_len);
+		} else {
+			pfree(bqc->ptr_value);
+			bqc->ptr_value = palloc(mtup->t_len);
+			memcpy(bqc->ptr_value, mtup, mtup->t_len);
+			bqc->size = mtup->t_len;
+		}
+	} else if (slot->tts_tuple) {
+		HeapTuple htup = slot->tts_tuple;
+		uint32		len;
+		len = htup->t_len - MINIMAL_TUPLE_OFFSET;
+		if (len <= bqc->size) {
+			memcpy(bqc->ptr_value, (char *) htup->t_data + MINIMAL_TUPLE_OFFSET, len);
+		} else {
+			pfree(bqc->ptr_value);
+			bqc->ptr_value = palloc(len);
+			memcpy(bqc->ptr_value, (char *) htup->t_data + MINIMAL_TUPLE_OFFSET, len);
+			bqc->size = len;
+		}
+	} else {
+		 heap_form_minimal_tuple_prl(slot->tts_tupleDescriptor,
+				   slot->tts_values,
+				   slot->tts_isnull, bqc);
+	}
+	
+	bq->end = (bq->end + 1)% (parallel_shared_queue_size + 1);
+	bq->size++;
+	
+	if (stopOnLast && last) {
+		bq->stop = true;
+	}
+	result = bq->stop;
+	PGSemaphoreUnlock(&(bq->mutex->sem));
+	PGSemaphoreUnlock(&(bq->items->sem));
+	return result;
+}
+
+
+/*
+ * heap_form_minimal_tuple
+ *		construct a MinimalTuple from the given values[] and isnull[] arrays,
+ *		which are of the length indicated by tupleDescriptor->natts
+ *
+ * This is exactly like heap_form_tuple() except that the result is a
+ * "minimal" tuple lacking a HeapTupleData header as well as room for system
+ * columns.
+ *
+ * The result is allocated in the current memory context.
+ */
+void
+heap_form_minimal_tuple_prl(TupleDesc tupleDescriptor,
+						Datum *values,
+						bool *isnull, BufferQueueCell * bqc)
+{
+	MinimalTuple tuple;			/* return tuple */
+	Size		len,
+				data_len;
+	int			hoff;
+	bool		hasnull = false;
+	Form_pg_attribute *att = tupleDescriptor->attrs;
+	int			numberOfAttributes = tupleDescriptor->natts;
+	int			i;
+
+	if (numberOfAttributes > MaxTupleAttributeNumber)
+		ereport(ERROR,
+				(errcode(ERRCODE_TOO_MANY_COLUMNS),
+				 errmsg("number of columns (%d) exceeds limit (%d)",
+						numberOfAttributes, MaxTupleAttributeNumber)));
+
+	/*
+	 * Check for nulls and embedded tuples; expand any toasted attributes in
+	 * embedded tuples.  This preserves the invariant that toasting can only
+	 * go one level deep.
+	 *
+	 * We can skip calling toast_flatten_tuple_attribute() if the attribute
+	 * couldn't possibly be of composite type.  All composite datums are
+	 * varlena and have alignment 'd'; furthermore they aren't arrays. Also,
+	 * if an attribute is already toasted, it must have been sent to disk
+	 * already and so cannot contain toasted attributes.
+	 */
+	for (i = 0; i < numberOfAttributes; i++)
+	{
+		if (isnull[i])
+			hasnull = true;
+		else if (att[i]->attlen == -1 &&
+				 att[i]->attalign == 'd' &&
+				 att[i]->attndims == 0 &&
+				 !VARATT_IS_EXTENDED(values[i]))
+		{
+			values[i] = toast_flatten_tuple_attribute(values[i],
+													  att[i]->atttypid,
+													  att[i]->atttypmod);
+		}
+	}
+
+	/*
+	 * Determine total space needed
+	 */
+	len = offsetof(MinimalTupleData, t_bits);
+
+	if (hasnull)
+		len += BITMAPLEN(numberOfAttributes);
+
+	if (tupleDescriptor->tdhasoid)
+		len += sizeof(Oid);
+
+	hoff = len = MAXALIGN(len); /* align user data safely */
+
+	data_len = heap_compute_data_size(tupleDescriptor, values, isnull);
+
+	len += data_len;
+
+	/*
+	 * Allocate and zero the space needed.
+	 */
+	if (len > bqc->size) {
+		pfree(bqc->ptr_value);
+		bqc->ptr_value = palloc0(len);
+		bqc->size = len;
+	}
+	tuple = (MinimalTuple) bqc->ptr_value;
+	//tuple = (MinimalTuple) palloc0(len);
+
+	/*
+	 * And fill in the information.
+	 */
+	tuple->t_len = len;
+	HeapTupleHeaderSetNatts(tuple, numberOfAttributes);
+	tuple->t_hoff = hoff + MINIMAL_TUPLE_OFFSET;
+
+	if (tupleDescriptor->tdhasoid)		/* else leave infomask = 0 */
+		tuple->t_infomask = HEAP_HASOID;
+
+	heap_fill_tuple(tupleDescriptor,
+					values,
+					isnull,
+					(char *) tuple + hoff,
+					data_len,
+					&tuple->t_infomask,
+					(hasnull ? tuple->t_bits : NULL));
+
+	return;
+}
+
 
