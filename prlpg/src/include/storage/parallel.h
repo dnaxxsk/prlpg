@@ -3,6 +3,7 @@
 
 #include "storage/lock.h"
 #include "storage/spin.h"
+#include "nodes/plannodes.h"
 
 extern bool parallel_execution_allowed;
 extern bool parallel_sort_allowed;
@@ -27,6 +28,8 @@ extern int  prl_test_chunk_cnt;
 extern bool prl_prealloc_queue;
 extern int prl_queue_item_size;
 
+extern bool prl_copy_plan;
+
 typedef enum {
 	PRL_STATE_FAKE,
 	PRL_STATE_REQUESTED,
@@ -37,6 +40,7 @@ typedef enum {
 } PRL_WORK_STATE;
 
 typedef enum {
+	PRL_WORKER_STATE_NONE,
 	PRL_WORKER_STATE_INITIAL, // proces caka na pracu, napr ihned po forknuti
 	PRL_WORKER_STATE_READY, // master mu nastavi pracu
 	PRL_WORKER_STATE_WORKING, // worker si vsimol ze ma pracu a pracuje
@@ -65,18 +69,21 @@ typedef struct SharedList
 
 typedef struct WorkParams
 {
-	int dummyValue1;
+	//int dummyValue1;
 	struct SortParams * sortParams;
 	struct QueryParams * queryParams;
 	struct TestParams * testParams;
 	// zoznam mastera do ktoreho sa ma tento worker pridat
-	SharedList * workersList;
+	//SharedList * workersList;
 	struct BufferQueue * bufferQueue;
 	Oid databaseId;
 	Oid roleId;
 	char * username;
 } WorkParams;
 
+/**
+ * This structure is not being used sofar
+ */
 typedef struct WorkResult
 {
 	int dummyResult1;
@@ -86,7 +93,7 @@ typedef struct WorkResult
 typedef struct Worker
 {
 	bool valid;
-	PGSemaphoreData sem;
+	//PGSemaphoreData sem;
 	pid_t workerPid;
 	struct WorkDef * work;
 	// protektor
@@ -96,6 +103,7 @@ typedef struct Worker
 
 typedef struct WorkDef
 {
+	bool new;
 	PRL_WORK_STATE state;
 	PRL_WORK_TYPE workType;
 	WorkParams * workParams;
@@ -123,6 +131,7 @@ typedef struct SortParams {
 typedef struct QueryParams {
 	// exec simple query 
 	const char *query_string;
+	Plan  *subnode;
 } QueryParams;
 
 
@@ -217,7 +226,8 @@ extern void cancelWorkers(void);
 // returns number of workers which changed the state
 extern int stateTransition(long int jobId, PRL_WORKER_STATE oldState, PRL_WORKER_STATE newState);
 
-extern void printAddUsage(void);
-extern void printGetUsage(void);
+//extern void printAddUsage(void);
+//extern void printGetUsage(void);
 
+extern void cleanup(void);
 #endif

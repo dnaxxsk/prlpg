@@ -40,6 +40,8 @@ int  prl_test_chunk_cnt = -1;
 bool prl_prealloc_queue = false;
 int prl_queue_item_size = -1;
 
+bool prl_copy_plan = false;
+
 // poziadavky na zalozenie novych workerov pre postmastra
 SharedList * prlJobsList;
 SharedList * workersToCancel;
@@ -51,36 +53,36 @@ NON_EXEC_STATIC PRL_SEM_HDR *PrlSemGlobal = NULL;
 
 NON_EXEC_STATIC slock_t *PrlSemLock = NULL;
 
-static long int addDuration = 0;
-static long int getDuration = 0;
+//static long int addDuration = 0;
+//static long int getDuration = 0;
 
 /**
  * Inicializacia volana v postmastri este pred vytvorenim akehokolvek backendu
  */
 void parallel_init(void) {
+	MemoryContext oldContext;
+	oldContext = MemoryContextSwitchTo(ShmParallelContext);
 	prlJobsList = createShList();
 	workersToCancel = createShList();
+	MemoryContextSwitchTo(oldContext);
 }
 
 SharedList * createShList(void) {
-	MemoryContext oldContext;
 	SharedList * result;
-	oldContext = MemoryContextSwitchTo(ShmParallelContext);
 	result = (SharedList*)palloc(sizeof(SharedList));
 	SpinLockInit(&result->mutex);
 	result->list = NIL;
-	MemoryContextSwitchTo(oldContext);
 	return result;
 }
 
 void shListAppend(SharedList * list, void * object) {
-	MemoryContext oldContext;
-	oldContext = MemoryContextSwitchTo(ShmParallelContext);
+//	MemoryContext oldContext;
+//	oldContext = MemoryContextSwitchTo(ShmParallelContext);
 	HOLD_INTERRUPTS();
 	SpinLockAcquire(&list->mutex);
 	list->list = lappend(list->list, object);
 	SpinLockRelease(&list->mutex);
-	MemoryContextSwitchTo(oldContext);
+//	MemoryContextSwitchTo(oldContext);
 	RESUME_INTERRUPTS();
 }
 
@@ -168,10 +170,6 @@ BufferQueue * createBufferQueue(int buffer_size) {
 	bq->head = NULL;
 	bq->tail = NULL;
 	
-	if (prl_prealloc_queue) {
-		
-	}
-	
 	ereport(DEBUG1,(errmsg("Parallel.c - create buffer queue - end")));
 	return bq;
 }
@@ -213,11 +211,11 @@ void destroyBufferQueue(BufferQueue * bq) {
 }
 
 bool bufferQueueAdd(BufferQueue * bq, BufferQueueCell * cell, bool stopOnLast) {
-	struct timeval tv;
+//	struct timeval tv;
 	bool result;
-	long int duration_u = tv.tv_usec;
-	long int duration_s = tv.tv_sec;
-	gettimeofday(&tv, NULL);
+//	long int duration_u = tv.tv_usec;
+//	long int duration_s = tv.tv_sec;
+//	gettimeofday(&tv, NULL);
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue add - start")));
 	PGSemaphoreLock(&(bq->spaces->sem), true);
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue - spaces downed")));
@@ -247,33 +245,33 @@ bool bufferQueueAdd(BufferQueue * bq, BufferQueueCell * cell, bool stopOnLast) {
 	PGSemaphoreUnlock(&(bq->mutex->sem));
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue add - mutex unlocked")));
 	PGSemaphoreUnlock(&(bq->items->sem));
-	gettimeofday(&tv, NULL);
-	duration_s = tv.tv_sec - duration_s;
-	duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
-	addDuration += duration_u;
+//	gettimeofday(&tv, NULL);
+//	duration_s = tv.tv_sec - duration_s;
+//	duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
+//	addDuration += duration_u;
 	return result;
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue add - items upped and end")));
 }
 
-void printAddUsage(void) {
-	ereport(LOG,(errmsg("Parallel.c - buffer queue ADD usage %ld", addDuration) ));
-	addDuration = 0;
-}
-
-void printGetUsage(void) {
-	ereport(LOG,(errmsg("Parallel.c - buffer queue GET usage %ld", getDuration) ));
-	getDuration = 0;
-}
+//void printAddUsage(void) {
+//	ereport(LOG,(errmsg("Parallel.c - buffer queue ADD usage %ld", addDuration) ));
+//	addDuration = 0;
+//}
+//
+//void printGetUsage(void) {
+//	ereport(LOG,(errmsg("Parallel.c - buffer queue GET usage %ld", getDuration) ));
+//	getDuration = 0;
+//}
 
 BufferQueueCell * bufferQueueGet(BufferQueue * bq, bool wait) {
-	struct timeval tv;
-	long int duration_u = 0;
-	long int duration_s = 0;
+//	struct timeval tv;
+//	long int duration_u = 0;
+//	long int duration_s = 0;
 	BufferQueueCell * result= NULL;
 	
-	gettimeofday(&tv, NULL);
-	duration_u = tv.tv_usec;
-	duration_s = tv.tv_sec;
+//	gettimeofday(&tv, NULL);
+//	duration_u = tv.tv_usec;
+//	duration_s = tv.tv_sec;
 	
 	if (!wait) {
 		PGSemaphoreLock(&(bq->mutex->sem), true);
@@ -292,10 +290,10 @@ BufferQueueCell * bufferQueueGet(BufferQueue * bq, bool wait) {
 	if (bq->head == NULL) {
 		// toto by sa ale nemalo stat kedze nas sem pustil semafor!
 //		ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - getting from empty - something is wrong")));
-		gettimeofday(&tv, NULL);
-		duration_s = tv.tv_sec - duration_s;
-		duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
-		addDuration += duration_u;
+//		gettimeofday(&tv, NULL);
+//		duration_s = tv.tv_sec - duration_s;
+//		duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
+//		addDuration += duration_u;
 		return result;
 	}
 
@@ -313,10 +311,10 @@ BufferQueueCell * bufferQueueGet(BufferQueue * bq, bool wait) {
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - mutex unlocked")));
 	PGSemaphoreUnlock(&(bq->spaces->sem));
 //	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - spaces upped and end")));
-	gettimeofday(&tv, NULL);
-	duration_s = tv.tv_sec - duration_s;
-	duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
-	getDuration += duration_u;
+//	gettimeofday(&tv, NULL);
+//	duration_s = tv.tv_sec - duration_s;
+//	duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
+//	getDuration += duration_u;
 	return result;
 }
 
@@ -539,3 +537,32 @@ bool bufferQueueSetStop(BufferQueue * bq, bool newStop) {
 	return result;
 }
 
+void cleanup(void) {
+	Worker * worker;
+	BufferQueueCell * bqc;
+	ListCell * lc;
+	foreach(lc, workersList->list) {
+		worker = (Worker *) lfirst(lc);
+		SpinLockAcquire(&worker->mutex);
+		ereport(LOG,(errmsg("nodeSort - performing one bufferqueue cleaning")));
+		bqc = bufferQueueGetNoSem(worker->work->workParams->bufferQueue);
+		while (bqc != NULL) {
+			if (bqc->last) {
+				pfree(bqc);
+			} else {
+				pfree(((MinimalTuple *)((PrlSortTuple *)bqc->ptr_value)->tuple));
+				pfree((PrlSortTuple *)bqc->ptr_value);
+				pfree(bqc);
+			}
+			bqc = bufferQueueGetNoSem(worker->work->workParams->bufferQueue);
+		}
+		destroyBufferQueue(worker->work->workParams->bufferQueue);
+		// remove from postmaster work list
+		shListRemove(prlJobsList, worker->work);
+		// this is not necessary as we clear it in postmaster
+		//shListRemove(workersToCancel, worker);
+		// remove from my list 
+		shListRemove(workersList, worker);
+		SpinLockRelease(&worker->mutex);
+	}
+}

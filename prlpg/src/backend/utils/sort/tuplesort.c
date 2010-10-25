@@ -1459,6 +1459,7 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 			elog(ERROR, "invalid tuplesort state");
 			return false;		/* keep compiler quiet */
 	}
+	return false;
 }
 
 /*
@@ -3201,7 +3202,7 @@ free_sort_tuple(Tuplesortstate *state, SortTuple *stup)
 }
 
 /**
- * TODO use some id to find out which workers we should register to us
+ * Registering only workers for this task
  */
 void registerWorkers(Tuplesortstate * state, int prl_level) {
 	// register them in my array
@@ -3245,46 +3246,34 @@ void distributeToWorker(Tuplesortstate * state, TupleTableSlot * slot,
 		bool last) {
 	BufferQueueCell * bqc;
 	int i, now;
-	MemoryContext oldContext;
 	PrlSortTuple * stup;
 	
 	if (last == true) {
 		// send last to all workers
 		for (i = 0; i < state->workersCnt; ++i) {
 			ereport(LOG,(errmsg("nodeSort - last tuple - sending ending tuple to worker.")));
-			// where to switch context? .. here or should we make the caller responsible?
-			oldContext = MemoryContextSwitchTo(ShmParallelContext);
 			// workers will deallocate it .. 
 			bqc = (BufferQueueCell *)palloc(sizeof(BufferQueueCell));
 			bqc->last = true;
 			// ooh .. so many pointers ..
 			bufferQueueAdd(state->workers[i]->work->workParams->bufferQueue,
 					bqc, false);
-			MemoryContextSwitchTo(oldContext);
 		}
 	} else {
 		// send to next worker in round robin logic
 		now = (state->lastWorker+1) % state->workersCnt;
-//		ereport(DEBUG1,(errmsg("nodeSort - pushing tuple to worker %d starting.", now)));
-		// same like before .. who should be responsible for memory context switching? 
-		// caller definitely knows we need shared memory
-		oldContext = MemoryContextSwitchTo(ShmParallelContext);
 		// copy to stup
 		stup = tuplesort_prl_puttupleslot(state, slot);
 		// create box which worker is responsible of deallocating ..
 		// he should also deallocate ptr_value and even the tuple inside of ptr_value ;-)
 		// and that is just in SortTuple with MinimalTuple 
-		// dont care of index tuples for now :-(
-		 bqc = (BufferQueueCell *)palloc(sizeof(BufferQueueCell));
+		bqc = (BufferQueueCell *)palloc(sizeof(BufferQueueCell));
 		// set value
 		bqc->ptr_value = stup;
 		// it is not last
 		bqc->last = false;
 		// add to queue
 		bufferQueueAdd(state->workers[now]->work->workParams->bufferQueue, bqc, false);
-		// switch back to context we started with
-		MemoryContextSwitchTo(oldContext);
-//		ereport(DEBUG1,(errmsg("nodeSort - pushing tuple to worker %d finished.", now)));
 		// store last
 		state->lastWorker = now;
 	}
@@ -3319,13 +3308,10 @@ bool tuplesort_gettupleslot_from_worker(Tuplesortstate * state, bool forward, Tu
 			}
 		} else {
 			oldcontext = MemoryContextSwitchTo(state->sortcontext);
-			//new_stup = (SortTuple *)palloc(sizeof(SortTuple));
 			new_stup.isnull1 = ((PrlSortTuple *)bqc->ptr_value)->isnull1;
 			new_stup.tuple = (void *)heap_copy_minimal_tuple(((PrlSortTuple *)bqc->ptr_value)->tuple);
 			// this will not work because it is pointer to shared memory 
-			//new_stup.datum1 = ((PrlSortTuple *)bqc->ptr_value)->datum1;
 			computeDatum1(state, &new_stup);
-			//ereport(DEBUG1,(errmsg("Master - tuplesort_gettupleslot_from_worker - fetched from buffer %d %ld", new_stup.counter, new_stup.datum1)));
 			tuplesort_heap_insert(state, &new_stup, stup.tupindex, false);
 			MemoryContextSwitchTo(oldcontext);
 

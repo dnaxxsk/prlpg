@@ -217,12 +217,17 @@ ExecAppend(AppendState *node)
 		
 		if (isPrlSqlOn) {
 			long int jobId = random();
-			int i = 0;
+			int i,j = 0;
 			WorkDef* work;
+			Worker * worker;
 			QueryParams * qp = NULL;
 			MemoryContext oldContext;
-			
-			oldContext = MemoryContextSwitchTo(ShmParallelContext);
+			ListCell * lc;
+			if (ShmMessageContext == NULL) {
+				ShmMessageContext = ShmContextCreate(ShmParallelContext,
+						"ShmMessageContext", 0, 0, 0);
+			}
+			oldContext = MemoryContextSwitchTo(ShmMessageContext);
 			
 			pas->workersCnt = prlSqlLvl;
 			pas->jobId = jobId;
@@ -232,10 +237,10 @@ ExecAppend(AppendState *node)
 			}
 			for (i=0; i < prlSqlLvl; ++i) {
 				work = (WorkDef*)palloc(sizeof(WorkDef));
+				work->new = true;
 				work->workType = PRL_WORK_TYPE_QUERY;
 				work->state = PRL_STATE_REQUESTED;
 				work->workParams = (WorkParams*)palloc(sizeof(WorkParams));
-				work->workResult = (WorkResult*)palloc(sizeof(WorkResult));
 				work->jobId = jobId;
 				qp = (QueryParams *) palloc(sizeof(QueryParams));
 				switch (i) {
@@ -248,14 +253,39 @@ ExecAppend(AppendState *node)
 					strcpy((char *)qp->query_string, prlSqlQ2);
 					break;
 				}
+				if (prl_copy_plan) {
+					foreach(lc, ((Append *)(node->ps.plan))->appendplans)
+					{
+						Plan *initNode = (Plan *) lfirst(lc);
+						if (j == i) {
+							qp->subnode = copyObject(initNode);
+							break;
+						}
+						j++;
+					}
+				} 
 				work->workParams->queryParams = qp;
-				work->workParams->workersList = workersList;
+//				work->workParams->workersList = workersList;
 				work->workParams->databaseId = MyProc->databaseId;
 				work->workParams->roleId = MyProc->roleId;
 				work->workParams->username = GetUserNameFromId(MyProc->roleId);
 				work->workParams->bufferQueue
 						= createBufferQueue(parallel_shared_queue_size);
+				
+				worker = (Worker*)palloc(sizeof(Worker));
+				SpinLockInit(&worker->mutex);
+				worker->valid = false;
+				worker->state = PRL_WORKER_STATE_NONE;
+				worker->work = work;
+				work->worker = worker;
+				shListAppend(workersList, worker);
+				MemoryContextSwitchTo(oldContext);
+				
+				oldContext = MemoryContextSwitchTo(ShmParallelContext);
 				shListAppend(prlJobsList, work);
+				MemoryContextSwitchTo(oldContext);
+				
+				oldContext = MemoryContextSwitchTo(ShmMessageContext);
 			}
 			
 			SendPostmasterSignal(PMSIGNAL_START_PARALLEL_WORKERS);
@@ -278,13 +308,14 @@ ExecAppend(AppendState *node)
 		MinimalTuple tup;
 		
 		for(;;) {
+			bool end= true;
 			if (cycles == pas->workersCnt) {
 				// we dont want to mindlessly check it all the time 
 				cycles = 0;
 				pg_usleep(prl_wait_time);
 			}
 			// check the end
-			bool end= true;
+			
 			for (j = 0; j < pas->workersCnt; ++j) {
 				if (!pas->workersFinished[j]) {
 					end = false;
@@ -399,8 +430,7 @@ ExecEndAppend(AppendState *node)
 		foreach(lc, workersList->list) {
 			worker = (Worker *) lfirst(lc);
 			SpinLockAcquire(&worker->mutex);
-			if (worker->valid && worker->work->jobId == jobId) {
-				worker->state = PRL_WORKER_STATE_END;
+			if (worker->valid && worker->state != PRL_WORKER_STATE_FINISHED_ACK && worker->work->jobId == jobId) {
 				lastValue = bufferQueueSetStop(worker->work->workParams->bufferQueue, true);
 				if (!lastValue) {
 					// clear at least one value, so they have a chance to notice the end
@@ -424,7 +454,6 @@ ExecEndAppend(AppendState *node)
 		
 		waitForWorkers(jobId,workersCnt,PRL_WORKER_STATE_END_ACK);
 		
-		SpinLockAcquire(&workersList->mutex);
 		foreach(lc, workersList->list) {
 			worker = (Worker *) lfirst(lc);
 			SpinLockAcquire(&worker->mutex);
@@ -440,16 +469,13 @@ ExecEndAppend(AppendState *node)
 					bqc = bufferQueueGetNoSem(worker->work->workParams->bufferQueue);
 				}
 				destroyBufferQueue(worker->work->workParams->bufferQueue);
+				// remove from postmaster work list
+				shListRemove(prlJobsList, worker->work);
+				// remove from my list 
+				shListRemove(workersList, worker);
 			}
 			SpinLockRelease(&worker->mutex);
-			/*TODO - add correct removal of shared worker structures
-			 * spinlock destroy ...
-			 shListRemove(prlJobsList, worker->work);
-			 shListRemove(worker->work->workParams->workersList, worker);
-			 pfree(worker);
-			 */
 		}
-		SpinLockRelease(&workersList->mutex);
 	} 
 }
 

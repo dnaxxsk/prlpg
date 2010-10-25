@@ -121,6 +121,7 @@ MemoryContext ShmContextCreate(MemoryContext parent, const char * name,
  */
 static void * ShmAlloc(MemoryContext context, Size size) {
 	ShmCtx ctx = (ShmCtx) context;
+	AllocChunk chunk;
 	AllocBlock block = (AllocBlock) mm_malloc(ctx->mm, size + ALLOC_BLOCKHDRSZ + ALLOC_CHUNKHDRSZ);
 	if (block == NULL) {
 		// probably not enough memory
@@ -132,7 +133,7 @@ static void * ShmAlloc(MemoryContext context, Size size) {
 	block->sctx = ctx;
 	//block->size = size;
 	block->prev = NULL;
-	AllocChunk chunk = (AllocChunk) ((char *)block +  ALLOC_BLOCKHDRSZ);
+	chunk = (AllocChunk) ((char *)block +  ALLOC_BLOCKHDRSZ);
 	chunk->sctx = ctx;
 	chunk->size = size;
 	HOLD_INTERRUPTS();
@@ -191,6 +192,7 @@ static void * ShmRealloc(MemoryContext context, void * pointer, Size size) {
 	} else {
 		mm_free(ctx->mm, pointer);
 	}
+	return NULL;
 }
 
 static void ShmInit(MemoryContext context) {
@@ -200,10 +202,15 @@ static void ShmInit(MemoryContext context) {
 // Dalsia velmi pochybna metoda ...
 static void ShmReset(MemoryContext context) {
 	ShmCtx ctx = (ShmCtx) context;
-	ereport(FATAL, (errmsg("NOT IMPLEMENTED!")));
-	if (context->parent == NULL) {
-		mm_reset(ctx->mm);
+	AllocBlock block = ctx->box->blocks;
+	while (block != NULL) {
+		AllocBlock next = block->next;
+
+		mm_free(ctx->mm, (void *)block);
+
+		block = next;
 	}
+	ctx->box->blocks = NULL;
 }
 
 static void ShmDelete(MemoryContext context) {

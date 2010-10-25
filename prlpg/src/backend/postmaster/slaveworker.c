@@ -100,7 +100,6 @@ WorkerStatementCancelHandler(SIGNAL_ARGS)
 
 
 int slaveBackendMain(WorkDef * work) {
-	MemoryContext oldContext;
 	Worker * worker;
 //	char	   *dbname;
 	sigjmp_buf	local_sigjmp_buf;
@@ -114,8 +113,6 @@ int slaveBackendMain(WorkDef * work) {
 	am_slave_worker = true;
 	
 	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 2")));
-	
-	//TODO - stack_base_ptr?
 	
 	pqsignal(SIGHUP, SigHupHandler);	/* set flag to read config file */
 	pqsignal(SIGINT, WorkerStatementCancelHandler);	/* cancel current query */
@@ -158,12 +155,8 @@ int slaveBackendMain(WorkDef * work) {
 	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 8")));
 	// po Inite uz mam pgproc so semaforom kde mozem cakat na pracu ...
 	// neprijimalo to SIGINT ked ho canceloval master
-	//sigaddset(&UnBlockSig, SIGINT);
 	PG_SETMASK(&UnBlockSig);
-	//int mmask = siggetmask();
-	//ereport(LOG,(errmsg("Worker mask is %d, %d, %d", mmask,BlockSig, UnBlockSig)));
 	//here I should get masters dbname and username
-	//ereport(DEBUG3,(errmsg_internal("InitPostgres")));
 	InitPostgres(NULL, work->workParams->databaseId, work->workParams->username, NULL);
 	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 9")));
 	SetProcessingMode(NormalProcessing);
@@ -173,32 +166,26 @@ int slaveBackendMain(WorkDef * work) {
 	 * likewise can't be done until GUC settings are complete)
 	 */
 	process_local_preload_libraries();
-	ereport(LOG,(errmsg("Worker: Initializing - step 11")));
-	// here will be mail loop for slave backend work
+	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 11")));
 	
-	oldContext = MemoryContextSwitchTo(ShmParallelContext);
-	worker = (Worker*)palloc(sizeof(Worker));
-	SpinLockInit(&worker->mutex);
+	worker = work->worker;
+	SpinLockAcquire(&worker->mutex);
 	worker->workerPid = MyProcPid;
-	worker->sem = MyProc->sem;
 	worker->valid = true;
 	worker->state = PRL_WORKER_STATE_INITIAL;
-	worker->work = work;
-	
+	SpinLockRelease(&worker->mutex);
+
 	ereport(LOG,(errmsg("Worker: Initialized")));
 	
 	//pg_usleep(60 * 1000000L);
 	
-	shListAppend(work->workParams->workersList, worker);
+	//shListAppend(work->workParams->workersList, worker);
 	
 	MessageContext = AllocSetContextCreate(TopMemoryContext,
 										  "MessageContext",
 										  ALLOCSET_DEFAULT_MINSIZE,
 										  ALLOCSET_DEFAULT_INITSIZE,
 										  ALLOCSET_DEFAULT_MAXSIZE);
-	
-	// switch right here so we can init work in our local memory
-	MemoryContextSwitchTo(oldContext);
 	
 	// here process errors and cancel query of master too
 	if (sigsetjmp(local_sigjmp_buf, 1) != 0) {
@@ -271,11 +258,6 @@ int slaveBackendMain(WorkDef * work) {
 	// handle ERROR
 	PG_exception_stack = &local_sigjmp_buf;
 	
-	
-//	if (InterruptHoldoffCount > 0) {
-//		ereport(LOG,(errmsg("Signals blocked.")));
-//	}
-	
 	waitForState(worker, PRL_WORKER_STATE_READY);
 		
 	if (work->workType == PRL_WORK_TYPE_SORT) {
@@ -298,14 +280,11 @@ int slaveBackendMain(WorkDef * work) {
 	
 	ereport(DEBUG_PRL2,(errmsg("Worker: wait till the end")));
 	
-	waitForAndSet(worker, PRL_WORKER_STATE_END, PRL_WORKER_STATE_END_ACK);
-	
+	SpinLockAcquire(&worker->mutex);
+	worker->state = PRL_WORKER_STATE_END_ACK;
+	SpinLockRelease(&worker->mutex);
 	ereport(DEBUG_PRL2,(errmsg("Worker: THE END")));
 	
-	// remove me from masters list 
-	//shListRemove(worker->work->workParams->workersList, worker);
-	//pfree(worker);
-	//shListRemove(prlJobsList, work);
 	return 0;
 }
 
@@ -332,18 +311,13 @@ static void doSort(WorkDef * work, Worker * worker) {
 			pfree(bqc);
 			break;
 		}
-//		ereport(DEBUG1,(errmsg("Worker - doSort - received tuple")));
 		//do the logic of tuplesort_puttupleslot(tuplesortstate, slot);
 		tuplesort_puttupleslot_prl(tuplesortstate, (PrlSortTuple *)bqc->ptr_value);
 		// clear it from shared memory ..
-//		ereport(DEBUG1,(errmsg("Worker - doSort - before putted tuple")));
 		pfree(((MinimalTuple *)((PrlSortTuple *)bqc->ptr_value)->tuple));
 		pfree((PrlSortTuple *)bqc->ptr_value);
 		pfree(bqc);
-//		ereport(DEBUG1,(errmsg("Worker - doSort - after putted tuple")));
 	}
-	
-	printGetUsage();
 	
 	ereport(DEBUG_PRL2,(errmsg("Worker-doSort: before performsort")));
 	tuplesort_performsort(tuplesortstate);
@@ -352,7 +326,9 @@ static void doSort(WorkDef * work, Worker * worker) {
 	// and reuse these workers for another job 
 	ereport(DEBUG_PRL2,(errmsg("Worker-doSort: after performsort")));
 	
-	//pg_usleep(30 * 1000000L);
+	//time to signal cancellation ... 
+	//pg_usleep(60 * 1000000L);
+	
 	ereport(DEBUG_PRL2,(errmsg("Worker-doSort: after performsort - after sleep")));
 	if (InterruptHoldoffCount > 0) {
 		ereport(DEBUG_PRL2,(errmsg("Worker - Signals blocked.")));
@@ -363,8 +339,6 @@ static void doSort(WorkDef * work, Worker * worker) {
 	// tell the master that we have finished
 	SpinLockAcquire(&worker->mutex);
 	worker->state = PRL_WORKER_STATE_FINISHED;
-	// TODO - remove dummy
-	work->workResult->dummyResult1 = work->workParams->dummyValue1*2;
 	SpinLockRelease(&worker->mutex);
 	ereport(LOG,(errmsg("Worker-doSort: set state to FINISHED")));
 	// wait for ACK by master (master waits for all slaves to return results)
@@ -392,7 +366,7 @@ static void doSort(WorkDef * work, Worker * worker) {
 			break;
 		}
 	}
-	printAddUsage();
+	//printAddUsage();
 	MemoryContextSwitchTo(oldContext);
 	
 	ereport(DEBUG_PRL2,(errmsg("Worker-doSort: end")));
@@ -421,6 +395,7 @@ static void doQuery(WorkDef * work, Worker * worker) {
 		long count;
 		long nprocessed;
 		PrlSendState * pss;
+		PlannedStmt * plannedStmt;
 		
 		CHECK_FOR_INTERRUPTS();
 		
@@ -441,9 +416,13 @@ static void doQuery(WorkDef * work, Worker * worker) {
 		/* If we got a cancel signal in analysis or planning, quit */
 		CHECK_FOR_INTERRUPTS();
 		
+		plannedStmt = (PlannedStmt *) linitial(plantree_list);
+		if (prl_copy_plan) {
+			plannedStmt->planTree = copyObject(pars->subnode);
+		}
 		
 		PushActiveSnapshot(GetTransactionSnapshot());
-		queryDesc = CreateQueryDesc((PlannedStmt *) linitial(plantree_list),
+		queryDesc = CreateQueryDesc(plannedStmt,
 									pars->query_string,
 									GetActiveSnapshot(),
 									InvalidSnapshot,
@@ -630,11 +609,6 @@ static void doTest(WorkDef * work, Worker * worker) {
 								pars->type, pars->cycles, pars->chunk_cnt, pars->chunk_size, duration_u / 1000000, duration_u % 1000000)));
 		MemoryContextSwitchTo(oldContext);
 	}
-	
-	// finished
-	SpinLockAcquire(&worker->mutex);
-	worker->state = PRL_WORKER_STATE_FINISHED;
-	SpinLockRelease(&worker->mutex);
 	
 	return;
 }

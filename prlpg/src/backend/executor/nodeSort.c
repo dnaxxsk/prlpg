@@ -51,6 +51,7 @@ ExecSort(SortState *node)
 	TupleTableSlot *slot;
 	MemoryContext oldContext;
 	WorkDef * work;
+	Worker * worker;
 	//guc variable
 	int prl_level = parallel_sort_level;
 	bool prl_on = parallel_execution_allowed && !isSlaveWorker();
@@ -76,7 +77,11 @@ ExecSort(SortState *node)
 		long int workersId = random();
 		TestParams * testParams;
 		
-		oldContext = MemoryContextSwitchTo(ShmParallelContext);
+		if (ShmMessageContext == NULL) {
+			ShmMessageContext = ShmContextCreate (ShmParallelContext,"ShmMessageContext",0,0,0);
+		}
+		
+		oldContext = MemoryContextSwitchTo(ShmMessageContext);
 		if (workersList == NULL) {
 			workersList = createShList();
 		}
@@ -86,7 +91,6 @@ ExecSort(SortState *node)
 			work->workType = PRL_WORK_TYPE_TEST;
 			work->state = PRL_STATE_REQUESTED;
 			work->workParams = (WorkParams*)palloc(sizeof(WorkParams));
-			work->workResult = (WorkResult*)palloc(sizeof(WorkResult));
 			work->jobId = workersId;
 			testParams = (TestParams *) palloc(sizeof(TestParams));
 			testParams->type = prl_test_type;
@@ -94,12 +98,25 @@ ExecSort(SortState *node)
 			testParams->chunk_size = prl_test_chunk_size;
 			testParams->cycles = prl_test_cycles;
 			work->workParams->testParams = testParams;
-			work->workParams->workersList = workersList;
+			//work->workParams->workersList = workersList;
 			work->workParams->databaseId = MyProc->databaseId;
 			work->workParams->roleId = MyProc->roleId;
 			work->workParams->username = GetUserNameFromId(MyProc->roleId);
-			//work->workParams->bufferQueue = createBufferQueue(parallel_shared_queue_size);
+			worker = (Worker*)palloc(sizeof(Worker));
+			SpinLockInit(&worker->mutex);
+			worker->valid = false;
+			worker->state = PRL_WORKER_STATE_NONE;
+			worker->work = work;
+			work->worker = worker;
+			shListAppend(workersList, worker);
+			MemoryContextSwitchTo(oldContext);
+
+			oldContext = MemoryContextSwitchTo(ShmParallelContext);
 			shListAppend(prlJobsList, work);
+			MemoryContextSwitchTo(oldContext);
+
+			oldContext = MemoryContextSwitchTo(ShmMessageContext);
+
 		}
 		
 		ereport(LOG,(errmsg("Master: Signalizing Postmaster")));
@@ -112,11 +129,6 @@ ExecSort(SortState *node)
 		// let them know to start working
 		stateTransition(workersId, PRL_WORKER_STATE_INITIAL, PRL_WORKER_STATE_READY);	
 		
-		// wait for the end of test
-		waitForWorkers(workersId, prl_test_workers, PRL_WORKER_STATE_FINISHED);
-		
-		// let them die
-		stateTransition(workersId, PRL_WORKER_STATE_FINISHED, PRL_WORKER_STATE_END);
 		waitForWorkers(workersId, prl_test_workers, PRL_WORKER_STATE_END_ACK);
 		
 		slot = node->ss.ps.ps_ResultTupleSlot;
@@ -171,7 +183,7 @@ ExecSort(SortState *node)
 		tuplesort_set_parallel(tuplesortstate, prl_on);
 		
 		if (!prl_on) {
-			ereport(LOG,(errmsg("nodeSort std - before sending tuples to workers")));
+			ereport(LOG,(errmsg("nodeSort std - loading tuples")));
 			ii = 0;
 			for (;;)
 			{
@@ -201,13 +213,15 @@ ExecSort(SortState *node)
 			node->bound_Done = node->bound;
 			SO1_printf("ExecSort: %s\n", "sorting done");
 		} else {
-			//int mmask = sigprocmask();
-			//ereport(LOG,(errmsg("Master mask is %d", mmask)));
 			tuplesort_set_prl_level(tuplesortstate, prl_level);
 			tuplesort_set_workersId(tuplesortstate, workersId);
 			node->tuplesortstate = (void *) tuplesortstate;
+			
+			if (ShmMessageContext == NULL) {
+				ShmMessageContext = ShmContextCreate (ShmParallelContext,"ShmMessageContext",0,0,0);
+			}
 	
-			oldContext = MemoryContextSwitchTo(ShmParallelContext);
+			oldContext = MemoryContextSwitchTo(ShmMessageContext);
 			
 			// kind of on demand but it would be better to do it during init of this backend
 			if (workersList == NULL) {
@@ -217,11 +231,10 @@ ExecSort(SortState *node)
 			// prepare work with params and let postmaster create us workers
 			for (i=0; i < prl_level; i++) {
 				work = (WorkDef*)palloc(sizeof(WorkDef));
+				work->new = true;
 				work->workType = PRL_WORK_TYPE_SORT;
 				work->state = PRL_STATE_REQUESTED;
 				work->workParams = (WorkParams*)palloc(sizeof(WorkParams));
-				work->workResult = (WorkResult*)palloc(sizeof(WorkResult));
-				work->workParams->dummyValue1 = 100 + 100*i;
 				work->jobId = workersId;
 				sortParams = (SortParams *) palloc(sizeof(SortParams));
 				sortParams->bounded = node->bounded;
@@ -241,12 +254,27 @@ ExecSort(SortState *node)
 					sortParams->nullsFirst[j] = plannode->nullsFirst[j];
 				}
 				work->workParams->sortParams = sortParams;
-				work->workParams->workersList = workersList;
+				//work->workParams->workersList = workersList;
 				work->workParams->databaseId = MyProc->databaseId;
 				work->workParams->roleId = MyProc->roleId;
 				work->workParams->username = GetUserNameFromId(MyProc->roleId);
 				work->workParams->bufferQueue = createBufferQueue(parallel_shared_queue_size);
+				
+				worker = (Worker*)palloc(sizeof(Worker));
+				SpinLockInit(&worker->mutex);
+				worker->valid = false;
+				worker->state = PRL_WORKER_STATE_NONE;
+				worker->work = work;
+				work->worker = worker;
+				
+				shListAppend(workersList, worker);
+				MemoryContextSwitchTo(oldContext);
+
+				oldContext = MemoryContextSwitchTo(ShmParallelContext);
 				shListAppend(prlJobsList, work);
+				MemoryContextSwitchTo(oldContext);
+
+				oldContext = MemoryContextSwitchTo(ShmMessageContext);
 			}
 			
 			ereport(LOG,(errmsg("Master: Signalizing Postmaster")));
@@ -266,20 +294,15 @@ ExecSort(SortState *node)
 			 */
 			for (;;) {
 				slot = ExecProcNode(outerNode);
+				oldContext = MemoryContextSwitchTo(ShmParallelContext);
 				if (TupIsNull(slot)) {
 					distributeToWorker(tuplesortstate, NULL, true);
+					MemoryContextSwitchTo(oldContext);
 					break;
 				}
 				distributeToWorker(tuplesortstate, slot, false);
+				MemoryContextSwitchTo(oldContext);
 			}
-			
-//			if (InterruptHoldoffCount > 0) {
-//				ereport(LOG,(errmsg("Master - Signals blocked.")));
-//			} else {
-//				ereport(LOG,(errmsg("Master - Signals OK.")));
-//			}
-			
-//			printAddUsage();
 			
 			ereport(LOG,(errmsg("nodeSort - waiting until workers finish the job.")));
 			// wait until they finish the job
@@ -305,8 +328,6 @@ ExecSort(SortState *node)
 			node->bounded_Done = node->bounded;
 			node->bound_Done = node->bound;
 			SO1_printf("ExecSort: %s\n", "sorting done");
-//			mmask = siggetmask();
-//			ereport(LOG,(errmsg("Master mask is %d", mmask)));
 		}
 	}
 		
@@ -442,8 +463,6 @@ ExecEndSort(SortState *node)
 		prl_on = tuplesort_is_parallel(node->tuplesortstate);
 		
 		if (prl_on) {
-			//ereport(LOG,(errmsg("nodeSort - try cleaning - before sleeping - letting time to workers to fill their buffers")));
-			//pg_usleep(2000000L);
 			jobId = tuplesort_get_workersId(node->tuplesortstate);
 			workersCnt = tuplesort_get_prl_level(node->tuplesortstate);
 			ereport(LOG,(errmsg("nodeSort - try cleaning")));
@@ -452,13 +471,12 @@ ExecEndSort(SortState *node)
 			foreach(lc, workersList->list) {
 				worker = (Worker *) lfirst(lc);
 				SpinLockAcquire(&worker->mutex);
-				if (worker->valid && /*worker->state == PRL_WORKER_STATE_FINISHED_ACK &&*/ worker->work->jobId == jobId) {
-					worker->state = PRL_WORKER_STATE_END;
+				if (worker->valid && worker->state != PRL_WORKER_STATE_FINISHED_ACK && worker->work->jobId == jobId) {
 					lastValue = bufferQueueSetStop(worker->work->workParams->bufferQueue, true);
 					if (!lastValue) {
 						ereport(LOG,(errmsg("nodeSort - clearing one value from queue so worker can notice stop")));
 						// clear at least one value, so they have a chance to notice the end
-						// sended did not send all tuples ...
+						// sender did not send all tuples ...
 						// he might be stuck on semaphore
 						// it cant be empty because last one was not put inside
 						bqc = bufferQueueGet(worker->work->workParams->bufferQueue, false);
@@ -482,11 +500,10 @@ ExecEndSort(SortState *node)
 			waitForWorkers(jobId,workersCnt,PRL_WORKER_STATE_END_ACK);
 			
 			HOLD_INTERRUPTS();
-			SpinLockAcquire(&workersList->mutex);
 			foreach(lc, workersList->list) {
 				worker = (Worker *) lfirst(lc);
 				SpinLockAcquire(&worker->mutex);
-				if (worker->valid && /*worker->state == PRL_WORKER_STATE_END_ACK &&*/ worker->work->jobId == jobId) {
+				if (worker->valid && worker->work->jobId == jobId) {
 					ereport(LOG,(errmsg("nodeSort - performing one bufferqueue cleaning")));
 					bqc = bufferQueueGetNoSem(worker->work->workParams->bufferQueue);
 					while (bqc != NULL) {
@@ -500,21 +517,18 @@ ExecEndSort(SortState *node)
 						bqc = bufferQueueGetNoSem(worker->work->workParams->bufferQueue);
 					}
 					destroyBufferQueue(worker->work->workParams->bufferQueue);
+					// remove from postmaster work list
+					shListRemove(prlJobsList, worker->work);
+					// remove from my list 
+					shListRemove(workersList, worker);
 					
 				}
 				SpinLockRelease(&worker->mutex);
-				/*TODO - add correct removal of shared worker structures
-				 * spinlock destroy ...
-				shListRemove(prlJobsList, worker->work);
-				shListRemove(worker->work->workParams->workersList, worker);
-				pfree(worker);
-				*/
+				
 			}
-			SpinLockRelease(&workersList->mutex);
 			RESUME_INTERRUPTS();
 			
 			ereport(LOG,(errmsg("nodeSort - finished cleaning")));
-			printGetUsage();
 		}
 		
 		tuplesort_end((Tuplesortstate *) node->tuplesortstate);

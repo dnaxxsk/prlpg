@@ -3692,8 +3692,16 @@ PostgresMain(int argc, char *argv[], const char *username)
 		/* Signal workers to cancel as well */
 		if (workersList != NULL) {
 			cancelWorkers();
+			// this will count also already finished ones
 			waitForAllWorkers(PRL_WORKER_STATE_CANCELED);
-			// do cleanup after workers
+			// clean bufferqueues
+			cleanup();
+			// reset workers list
+			workersList = NULL;
+			if (ShmMessageContext != NULL) {
+				// free all previous allocations
+				MemoryContextReset(ShmMessageContext);
+			}
 		}
 		
 		
@@ -3765,6 +3773,17 @@ PostgresMain(int argc, char *argv[], const char *username)
 
 	for (;;)
 	{
+		MemoryContextStats(ShmParallelContext);
+		/*
+		 * Parallel cleaning before query
+		 */
+		workersList = NULL;
+		if (ShmMessageContext != NULL) {
+			// free all previous allocations
+			MemoryContextReset(ShmMessageContext);
+		}
+		MemoryContextStats(ShmParallelContext);
+		
 		/*
 		 * At top of loop, reset extended-query-message flag, so that any
 		 * errors encountered in "idle" state don't provoke skip.
