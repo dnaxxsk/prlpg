@@ -4211,7 +4211,8 @@ static void StartParallelWorkers(void) {
 		SpinLockAcquire(&prlJobsList->mutex);
 		foreach(lc, prlJobsList->list) {
 			WorkDef * work = (WorkDef *) lfirst(lc);
-			if (work->state == PRL_STATE_REQUESTED) {
+			if (work->new) {
+				work->new = false;
 				SpinLockRelease(&prlJobsList->mutex);
 				found = true;
 				ereport(LOG,(errmsg("PostMaster: Received signal - starting worker. %s", work->workParams->username)));
@@ -4233,8 +4234,8 @@ static void CancelParallelWorkers(void) {
 		
 	foreach(lc, workersToCancel->list) {
 		workerPid = (pid_t) lfirst_int(lc);
-		signal_child(workerPid, SIGINT);
 		ereport(LOG,(errmsg("PostMaster: Signal children to cancel query. %d", workerPid)));
+		signal_child(workerPid, SIGINT);
 	}
 	list_free(workersToCancel->list);
 	workersToCancel->list = NIL;

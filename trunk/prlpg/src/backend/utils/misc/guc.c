@@ -646,6 +646,14 @@ static struct config_bool ConfigureNamesBool[] =
 		false, NULL, NULL
 	},
 	{
+		{"prl_copy_plan", PGC_USERSET, PARALLEL_QUERY,
+			gettext_noop("Enables copying plan in append node"),
+			NULL
+		},
+		&prl_copy_plan,
+		false, NULL, NULL
+	},
+	{
 		{"enable_indexscan", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of index-scan plans."),
 			NULL
