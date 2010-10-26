@@ -89,7 +89,6 @@ ExecSort(SortState *node)
 		for (i=0; i < prl_test_workers; i++) {
 			work = (WorkDef*)palloc(sizeof(WorkDef));
 			work->workType = PRL_WORK_TYPE_TEST;
-			work->state = PRL_STATE_REQUESTED;
 			work->workParams = (WorkParams*)palloc(sizeof(WorkParams));
 			work->jobId = workersId;
 			testParams = (TestParams *) palloc(sizeof(TestParams));
@@ -98,7 +97,6 @@ ExecSort(SortState *node)
 			testParams->chunk_size = prl_test_chunk_size;
 			testParams->cycles = prl_test_cycles;
 			work->workParams->testParams = testParams;
-			//work->workParams->workersList = workersList;
 			work->workParams->databaseId = MyProc->databaseId;
 			work->workParams->roleId = MyProc->roleId;
 			work->workParams->username = GetUserNameFromId(MyProc->roleId);
@@ -233,7 +231,6 @@ ExecSort(SortState *node)
 				work = (WorkDef*)palloc(sizeof(WorkDef));
 				work->new = true;
 				work->workType = PRL_WORK_TYPE_SORT;
-				work->state = PRL_STATE_REQUESTED;
 				work->workParams = (WorkParams*)palloc(sizeof(WorkParams));
 				work->jobId = workersId;
 				sortParams = (SortParams *) palloc(sizeof(SortParams));

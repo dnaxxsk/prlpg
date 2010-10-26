@@ -4286,7 +4286,7 @@ static void forkSlave(WorkDef * work) {
 		bn->child_slot = 0;
 	}
 	 */	
-	work->state = PRL_STATE_FORKED;
+//	work->state = PRL_STATE_FORKED;
 
 	pid = fork_process();
 	if (pid == 0) /* child */

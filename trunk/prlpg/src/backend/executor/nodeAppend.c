@@ -239,7 +239,6 @@ ExecAppend(AppendState *node)
 				work = (WorkDef*)palloc(sizeof(WorkDef));
 				work->new = true;
 				work->workType = PRL_WORK_TYPE_QUERY;
-				work->state = PRL_STATE_REQUESTED;
 				work->workParams = (WorkParams*)palloc(sizeof(WorkParams));
 				work->jobId = jobId;
 				qp = (QueryParams *) palloc(sizeof(QueryParams));
@@ -265,7 +264,6 @@ ExecAppend(AppendState *node)
 					}
 				} 
 				work->workParams->queryParams = qp;
-//				work->workParams->workersList = workersList;
 				work->workParams->databaseId = MyProc->databaseId;
 				work->workParams->roleId = MyProc->roleId;
 				work->workParams->username = GetUserNameFromId(MyProc->roleId);
