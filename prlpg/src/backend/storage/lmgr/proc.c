@@ -244,7 +244,6 @@ InitProcGlobal(void)
 	//TODO - revise this .. hopefully remove dummy ..
 	oldcontext = MemoryContextSwitchTo(ShmParallelContext);
 	dummyWork = palloc(sizeof(WorkDef));
-	dummyWork->state = -1;
 	workDefList = lappend(workDefList, dummyWork);
 	MemoryContextSwitchTo(oldcontext);
 }

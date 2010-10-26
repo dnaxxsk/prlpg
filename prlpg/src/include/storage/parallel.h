@@ -31,16 +31,7 @@ extern int prl_queue_item_size;
 extern bool prl_copy_plan;
 
 typedef enum {
-	PRL_STATE_FAKE,
-	PRL_STATE_REQUESTED,
-	PRL_STATE_FORKED,
-	PRL_STATE_WAITING,
-	PRL_STATE_WORKING,
-	PRL_STATE_FINISHED
-} PRL_WORK_STATE;
-
-typedef enum {
-	PRL_WORKER_STATE_NONE,
+	PRL_WORKER_STATE_NONE, // initial state set in master before request send to postmaster
 	PRL_WORKER_STATE_INITIAL, // proces caka na pracu, napr ihned po forknuti
 	PRL_WORKER_STATE_READY, // master mu nastavi pracu
 	PRL_WORKER_STATE_WORKING, // worker si vsimol ze ma pracu a pracuje
@@ -54,9 +45,9 @@ typedef enum {
 } PRL_WORKER_STATE;
 
 typedef enum {
-	PRL_WORK_TYPE_SORT // sort
-	,PRL_WORK_TYPE_QUERY
-	,PRL_WORK_TYPE_TEST
+	PRL_WORK_TYPE_SORT, // sort
+	PRL_WORK_TYPE_QUERY,
+	PRL_WORK_TYPE_TEST
 } PRL_WORK_TYPE;
 
 //typedef struct SharedList SharedList;
@@ -69,12 +60,9 @@ typedef struct SharedList
 
 typedef struct WorkParams
 {
-	//int dummyValue1;
 	struct SortParams * sortParams;
 	struct QueryParams * queryParams;
 	struct TestParams * testParams;
-	// zoznam mastera do ktoreho sa ma tento worker pridat
-	//SharedList * workersList;
 	struct BufferQueue * bufferQueue;
 	Oid databaseId;
 	Oid roleId;
@@ -93,7 +81,6 @@ typedef struct WorkResult
 typedef struct Worker
 {
 	bool valid;
-	//PGSemaphoreData sem;
 	pid_t workerPid;
 	struct WorkDef * work;
 	// protektor
@@ -104,7 +91,6 @@ typedef struct Worker
 typedef struct WorkDef
 {
 	bool new;
-	PRL_WORK_STATE state;
 	PRL_WORK_TYPE workType;
 	WorkParams * workParams;
 	WorkResult * workResult;
