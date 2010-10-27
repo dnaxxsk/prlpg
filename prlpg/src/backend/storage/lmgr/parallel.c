@@ -412,7 +412,7 @@ bool waitForAllWorkers(PRL_WORKER_STATE state) {
 		foreach(lc, workersList->list) {
 			worker = (Worker *) lfirst(lc);
 			SpinLockAcquire(&worker->mutex);
-			if (worker->valid && (worker->state != state && worker->state != PRL_WORKER_STATE_END_ACK)) {
+			if (worker->valid && (worker->state != state && worker->state != PRL_WORKER_STATE_END)) {
 				notEnd = true;
 			}
 			SpinLockRelease(&worker->mutex);
