@@ -38,8 +38,7 @@ typedef enum {
 	PRL_WORKER_STATE_PARTIAL_READY, // konzument spracoval vysledky
 	PRL_WORKER_STATE_FINISHED, // worker uz dopracoval
 	PRL_WORKER_STATE_FINISHED_ACK, // master/konzument si vsimol ze worker uz dopracoval
-	PRL_WORKER_STATE_END,	// mastrom nastaveny stav na ukoncenie workerovho procesu
-	PRL_WORKER_STATE_END_ACK, // worker odsuhlasil ukoncenie, potvrdil END
+	PRL_WORKER_STATE_END, // worker sa ukoncil
 	PRL_WORKER_STATE_CANCELED // 
 } PRL_WORKER_STATE;
 

@@ -281,7 +281,7 @@ int slaveBackendMain(WorkDef * work) {
 	ereport(DEBUG_PRL2,(errmsg("Worker: wait till the end")));
 	
 	SpinLockAcquire(&worker->mutex);
-	worker->state = PRL_WORKER_STATE_END_ACK;
+	worker->state = PRL_WORKER_STATE_END;
 	SpinLockRelease(&worker->mutex);
 	ereport(DEBUG_PRL2,(errmsg("Worker: THE END")));
 	

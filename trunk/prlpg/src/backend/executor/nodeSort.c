@@ -127,7 +127,7 @@ ExecSort(SortState *node)
 		// let them know to start working
 		stateTransition(workersId, PRL_WORKER_STATE_INITIAL, PRL_WORKER_STATE_READY);	
 		
-		waitForWorkers(workersId, prl_test_workers, PRL_WORKER_STATE_END_ACK);
+		waitForWorkers(workersId, prl_test_workers, PRL_WORKER_STATE_END);
 		
 		slot = node->ss.ps.ps_ResultTupleSlot;
 		ExecClearTuple(slot);
@@ -468,7 +468,7 @@ ExecEndSort(SortState *node)
 			foreach(lc, workersList->list) {
 				worker = (Worker *) lfirst(lc);
 				SpinLockAcquire(&worker->mutex);
-				if (worker->valid && worker->state != PRL_WORKER_STATE_FINISHED_ACK && worker->work->jobId == jobId) {
+				if (worker->valid && worker->state != PRL_WORKER_STATE_END && worker->work->jobId == jobId) {
 					lastValue = bufferQueueSetStop(worker->work->workParams->bufferQueue, true);
 					if (!lastValue) {
 						ereport(LOG,(errmsg("nodeSort - clearing one value from queue so worker can notice stop")));
@@ -494,7 +494,7 @@ ExecEndSort(SortState *node)
 			RESUME_INTERRUPTS();
 			
 			// pockam nez si to vsimnu
-			waitForWorkers(jobId,workersCnt,PRL_WORKER_STATE_END_ACK);
+			waitForWorkers(jobId,workersCnt,PRL_WORKER_STATE_END);
 			
 			HOLD_INTERRUPTS();
 			foreach(lc, workersList->list) {

@@ -428,7 +428,7 @@ ExecEndAppend(AppendState *node)
 		foreach(lc, workersList->list) {
 			worker = (Worker *) lfirst(lc);
 			SpinLockAcquire(&worker->mutex);
-			if (worker->valid && worker->state != PRL_WORKER_STATE_FINISHED_ACK && worker->work->jobId == jobId) {
+			if (worker->valid && worker->state != PRL_WORKER_STATE_END && worker->work->jobId == jobId) {
 				lastValue = bufferQueueSetStop(worker->work->workParams->bufferQueue, true);
 				if (!lastValue) {
 					// clear at least one value, so they have a chance to notice the end
@@ -450,7 +450,7 @@ ExecEndAppend(AppendState *node)
 		}
 		SpinLockRelease(&workersList->mutex);
 		
-		waitForWorkers(jobId,workersCnt,PRL_WORKER_STATE_END_ACK);
+		waitForWorkers(jobId,workersCnt,PRL_WORKER_STATE_END);
 		
 		foreach(lc, workersList->list) {
 			worker = (Worker *) lfirst(lc);
