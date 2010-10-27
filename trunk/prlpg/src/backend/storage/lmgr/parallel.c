@@ -19,9 +19,8 @@
 #include "storage/shmem.h"
 
 // global variables
-bool parallel_execution_allowed = false;
-bool parallel_sort_allowed = false;
-int parallel_sort_level = 2;
+bool prl_sort = false;
+int prl_sort_dop = 2;
 int parallel_shared_queue_size = 1000;
 
 bool prl_sql = false;
