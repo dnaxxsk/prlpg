@@ -5,12 +5,11 @@
 #include "storage/spin.h"
 #include "nodes/plannodes.h"
 
-extern bool parallel_execution_allowed;
-extern bool parallel_sort_allowed;
-extern int parallel_sort_level;
-extern int parallel_shared_queue_size;
-extern int prl_wait_time;
-extern int prl_queue_item_size;
+extern bool prl_sort;
+extern int  prl_sort_dop;
+extern int  parallel_shared_queue_size;
+extern int  prl_wait_time;
+extern int  prl_queue_item_size;
 
 extern bool prl_sql;
 extern int prl_sql_lvl;

@@ -53,8 +53,8 @@ ExecSort(SortState *node)
 	WorkDef * work;
 	Worker * worker;
 	//guc variable
-	int prl_level = parallel_sort_level;
-	bool prl_on = parallel_execution_allowed && !isSlaveWorker();
+	int prl_level = prl_sort_dop;
+	bool prl_on = prl_sort && !isSlaveWorker();
 	int i,j, ii;
 	SortParams * sortParams;
 	MemoryContext currctx;

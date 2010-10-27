@@ -606,19 +606,11 @@ static struct config_bool ConfigureNamesBool[] =
 		true, NULL, NULL
 	},
 	{
-		{"parallel_execution_allowed", PGC_USERSET, PARALLEL_QUERY,
-			gettext_noop("Enables the single query to be executed parallely by more than 1 backend"),
+		{"prl_sort", PGC_USERSET, PARALLEL_QUERY,
+			gettext_noop("Enables the single query to execute sorting by more then 1 backend"),
 			NULL
 		},
-		&parallel_execution_allowed,
-		false, NULL, NULL
-	},
-	{
-		{"parallel_sort_allowed", PGC_USERSET, PARALLEL_QUERY,
-			gettext_noop("Enables to parallelize the sort operation"),
-			NULL
-		},
-		&parallel_sort_allowed,
+		&prl_sort,
 		false, NULL, NULL
 	},
 	{
@@ -1372,11 +1364,11 @@ static struct config_int ConfigureNamesInt[] =
 		12, 2, INT_MAX, NULL, NULL
 	},
 	{
-		{"parallel_sort_level", PGC_USERSET, PARALLEL_QUERY,
+		{"prl_sort_dop", PGC_USERSET, PARALLEL_QUERY,
 			gettext_noop("Sets the parallel sort level, i.e. how many workers to use per operation"),
 			NULL
 		},
-		&parallel_sort_level,
+		&prl_sort_dop,
 		2, 1, 128, NULL, NULL
 	},
 	{
