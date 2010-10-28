@@ -518,7 +518,24 @@
 # PARALLEL QUERY
 #------------------------------------------------------------------------------
 
-#parallel_execution_allowed = on
-#parallel_sort_allowed = on
-#parallel_sort_level = 2
+#prl_sort = on
+#prl_sort_dop = 2
+
+#prl_sql = on
+#prl_sql_lvl = 2
+#prl_sql_q1 = 'select sum(a), b from test4 group by b'
+#prl_sql_q2 = 'select sum(a), b from test5 group by b'
+
 #parallel_shared_queue_size = 100
+#prl_wait_time = 1
+#prl_prealloc_queue = off
+#prl_queue_item_size = 200
+
+#prl_copy_plan = off
+
+#prl_test = off
+#prl_test_workers = 1
+#prl_test_cycles = 1000
+#prl_test_type = 1 #1=palloc, 2=shmPalloc, 3=mmalloc
+#prl_test_chunk_size = 200
+#prl_test_chunk_cnt = 50000
