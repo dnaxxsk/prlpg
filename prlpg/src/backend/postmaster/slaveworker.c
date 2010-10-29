@@ -366,6 +366,7 @@ static void doSort(WorkDef * work, Worker * worker) {
 			break;
 		}
 	}
+	tuplesort_end(tuplesortstate);
 	//printAddUsage();
 	MemoryContextSwitchTo(oldContext);
 	
