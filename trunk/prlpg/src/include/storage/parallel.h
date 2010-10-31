@@ -34,18 +34,18 @@ typedef enum {
 	PRL_WORKER_STATE_INITIAL, // proces caka na pracu, napr ihned po forknuti
 	PRL_WORKER_STATE_READY, // master mu nastavi pracu
 	PRL_WORKER_STATE_WORKING, // worker si vsimol ze ma pracu a pracuje
-	PRL_WORKER_STATE_PARTIAL_RESULTS, // worker uz ma nejake vysledky pre mastera/konzumenta
-	PRL_WORKER_STATE_PARTIAL_READY, // konzument spracoval vysledky
 	PRL_WORKER_STATE_FINISHED, // worker uz dopracoval
 	PRL_WORKER_STATE_FINISHED_ACK, // master/konzument si vsimol ze worker uz dopracoval
 	PRL_WORKER_STATE_END, // worker sa ukoncil
-	PRL_WORKER_STATE_CANCELED // 
+	PRL_WORKER_STATE_CANCELED, //
+	PRL_WORKER_STATE_DIED
 } PRL_WORKER_STATE;
 
 typedef enum {
-	PRL_WORK_TYPE_SORT, // sort
-	PRL_WORK_TYPE_QUERY,
-	PRL_WORK_TYPE_TEST
+	PRL_WORK_TYPE_SORT
+	,PRL_WORK_TYPE_QUERY
+	,PRL_WORK_TYPE_TEST
+	,PRL_WORK_TYPE_END
 } PRL_WORK_TYPE;
 
 //typedef struct SharedList SharedList;
@@ -89,6 +89,7 @@ typedef struct Worker
 typedef struct WorkDef
 {
 	bool new;
+	bool hasWork;
 	PRL_WORK_TYPE workType;
 	WorkParams * workParams;
 	WorkResult * workResult;
@@ -113,9 +114,11 @@ typedef struct SortParams {
 } SortParams;
 
 typedef struct QueryParams {
-	// exec simple query 
+	// exec simple query
 	const char *query_string;
 	Plan  *subnode;
+	List  *rtable;
+	bool copyPlan;
 } QueryParams;
 
 
@@ -141,6 +144,7 @@ extern SharedList * createShList(void);
 extern void shListAppend(SharedList * list, void * object);
 extern void shListRemove(SharedList * list, void * object);
 extern void shListAppendInt(SharedList * list, int value);
+extern void shListRemoveNoLock(SharedList * list, void * object);
 
 typedef struct BufferQueueCell BufferQueueCell;
 

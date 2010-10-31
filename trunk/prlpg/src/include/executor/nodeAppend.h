@@ -26,6 +26,7 @@ typedef struct PrlAppendState
 {
 	bool prlOn;
 	int workersCnt;
+	int worksDone;
 	int lastWorker;
 	Worker ** workers;
 	bool * workersFinished;

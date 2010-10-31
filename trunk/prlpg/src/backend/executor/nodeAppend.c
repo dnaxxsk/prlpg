@@ -205,12 +205,14 @@ ExecAppend(AppendState *node)
 {
 	PrlAppendState * pas;
 	if (!node->prlInitDone) {
-		bool isPrlSqlOn = prl_sql;
+		bool isPrlSqlOn = prl_sql && !isSlaveWorker();
+		bool copyPlan = prl_copy_plan;
 		int prlSqlLvl = prl_sql_lvl;
 		char * prlSqlQ1 = prl_sql_q1; 
 		char * prlSqlQ2 = prl_sql_q2;
 		pas = (PrlAppendState *) palloc0(sizeof(PrlAppendState));
-		pas->prlOn = isPrlSqlOn && !isSlaveWorker();
+		pas->prlOn = isPrlSqlOn;
+		pas->worksDone = 0;
 		node->prl_append_state = (void *) pas;
 		
 		ereport(LOG,(errmsg("NodeAppend - start.")));
@@ -229,40 +231,55 @@ ExecAppend(AppendState *node)
 			}
 			oldContext = MemoryContextSwitchTo(ShmMessageContext);
 			
-			pas->workersCnt = prlSqlLvl;
+			
 			pas->jobId = jobId;
 			
 			if (workersList == NULL) {
 				workersList = createShList();
 			}
-			for (i=0; i < prlSqlLvl; ++i) {
+			
+			// How many workers we need vs we can ask for
+			if (node->as_nplans <= prlSqlLvl) {
+				pas->workersCnt = node->as_nplans;
+			} else {
+				pas->workersCnt = prlSqlLvl;
+			}
+			pas->worksDone = pas->workersCnt;
+			for (i=0; i < pas->workersCnt; ++i) {
 				work = (WorkDef*)palloc(sizeof(WorkDef));
 				work->new = true;
+				work->hasWork = true;
 				work->workType = PRL_WORK_TYPE_QUERY;
 				work->workParams = (WorkParams*)palloc(sizeof(WorkParams));
 				work->jobId = jobId;
 				qp = (QueryParams *) palloc(sizeof(QueryParams));
-				switch (i) {
-				case 0:
-					qp->query_string = palloc(strlen(prlSqlQ1));
-					strcpy((char *)qp->query_string, prlSqlQ1);
-					break;
-				case 1:
-					qp->query_string = palloc(strlen(prlSqlQ2));
-					strcpy((char *)qp->query_string, prlSqlQ2);
-					break;
-				}
-				if (prl_copy_plan) {
+				if (copyPlan) {
 					foreach(lc, ((Append *)(node->ps.plan))->appendplans)
 					{
 						Plan *initNode = (Plan *) lfirst(lc);
 						if (j == i) {
+
 							qp->subnode = copyObject(initNode);
+							qp->rtable  = copyObject(node->ps.state->es_range_table);
+							qp->copyPlan = true;
 							break;
 						}
 						j++;
 					}
-				} 
+				} else {
+					switch (i) {
+					case 0:
+						qp->query_string = palloc(strlen(prlSqlQ1));
+						qp->copyPlan = false;
+						strcpy((char *)qp->query_string, prlSqlQ1);
+						break;
+					case 1:
+						qp->query_string = palloc(strlen(prlSqlQ2));
+						qp->copyPlan = false;
+						strcpy((char *)qp->query_string, prlSqlQ2);
+						break;
+					}
+				}
 				work->workParams->queryParams = qp;
 				work->workParams->databaseId = MyProc->databaseId;
 				work->workParams->roleId = MyProc->roleId;
@@ -287,10 +304,10 @@ ExecAppend(AppendState *node)
 			}
 			
 			SendPostmasterSignal(PMSIGNAL_START_PARALLEL_WORKERS);
-			waitForWorkers(jobId, prlSqlLvl, PRL_WORKER_STATE_INITIAL);	
+			waitForWorkers(jobId, pas->workersCnt, PRL_WORKER_STATE_INITIAL);	
 			MemoryContextSwitchTo(oldContext);
 			
-			registerWorkers(pas, prlSqlLvl);
+			registerWorkers(pas, pas->workersCnt);
 			stateTransition(jobId, PRL_WORKER_STATE_INITIAL, PRL_WORKER_STATE_READY);
 		}
 		
@@ -298,7 +315,7 @@ ExecAppend(AppendState *node)
 	}
 	pas = (PrlAppendState *) node->prl_append_state;
 	
-	if (pas->prlOn && !isSlaveWorker()) {
+	if (pas->prlOn) {
 		int i = pas->lastWorker;
 		int j = 0;
 		int cycles = 0;
@@ -306,7 +323,7 @@ ExecAppend(AppendState *node)
 		MinimalTuple tup;
 		
 		for(;;) {
-			bool end= true;
+			bool end = true;
 			if (cycles == pas->workersCnt) {
 				// we dont want to mindlessly check it all the time 
 				cycles = 0;
@@ -331,8 +348,42 @@ ExecAppend(AppendState *node)
 				bqc = bufferQueueGet(pas->workers[i]->work->workParams->bufferQueue, false);
 				if (bqc != NULL) {
 					if (bqc->last) {
-						pas->workersFinished[i] = true;
+						
 						pfree(bqc);
+						if (pas->worksDone < node->as_nplans) {
+							int k = 0;
+							ListCell * lc;
+							MemoryContext oldContext;
+							// there are still are some unexecuted plans
+							// wait for this worker end its job
+							waitForState(pas->workers[i], PRL_WORKER_STATE_END);
+							// assign him new job
+							SpinLockAcquire(&pas->workers[i]->mutex);
+							oldContext = MemoryContextSwitchTo(ShmMessageContext);
+							// find correct params
+							foreach(lc, ((Append *)(node->ps.plan))->appendplans)
+							{
+								Plan *initNode = (Plan *) lfirst(lc);
+								if (k == pas->worksDone) {
+									pas->workers[i]->work->workParams->queryParams->subnode = copyObject(initNode);
+									pas->workers[i]->work->workParams->queryParams->rtable = copyObject(node->ps.state->es_range_table);
+									pas->workers[i]->work->workParams->queryParams->copyPlan = true;
+									break;
+								}
+								k++;
+							}
+							pas->worksDone++;
+							// set him to run the job
+							pas->workers[i]->state = PRL_WORKER_STATE_READY;
+							// need to reset the bq stop flag because it was stopped with last one 
+							bufferQueueSetStop(pas->workers[i]->work->workParams->bufferQueue, false);
+							MemoryContextSwitchTo(oldContext);
+							SpinLockRelease(&pas->workers[i]->mutex);
+							pas->workersFinished[i] = false;
+						} else {
+							// if there are not more plans to execute then this worker is finished
+							pas->workersFinished[i] = true;
+						}
 					} else {
 						pas->lastWorker = i;
 						tup = heap_copy_minimal_tuple(bqc->ptr_value);
@@ -452,28 +503,52 @@ ExecEndAppend(AppendState *node)
 		
 		waitForWorkers(jobId,workersCnt,PRL_WORKER_STATE_END);
 		
+		// pripravim ukoncovaci task
+		HOLD_INTERRUPTS();
+		SpinLockAcquire(&workersList->mutex);
 		foreach(lc, workersList->list) {
 			worker = (Worker *) lfirst(lc);
 			SpinLockAcquire(&worker->mutex);
 			if (worker->valid && worker->work->jobId == jobId) {
+
+				destroyBufferQueue(worker->work->workParams->bufferQueue);
+				worker->state = PRL_WORKER_STATE_READY;
+				worker->work->workType = PRL_WORK_TYPE_END;
+			}
+			SpinLockRelease(&worker->mutex);
+		}
+		SpinLockRelease(&workersList->mutex);
+		RESUME_INTERRUPTS();
+		
+		// pockam az sa ukoncia
+		waitForWorkers(jobId, workersCnt, PRL_WORKER_STATE_DIED);
+
+		// a zrusim vsetko
+		SpinLockAcquire(&workersList->mutex);
+		foreach(lc, workersList->list) {
+			worker = (Worker *) lfirst(lc);
+			SpinLockAcquire(&worker->mutex);
+			if (worker->valid && worker->work->jobId == jobId) {
+				ereport(LOG,(errmsg("nodeAppend - performing one bufferqueue cleaning")));
 				bqc = bufferQueueGetNoSem(worker->work->workParams->bufferQueue);
 				while (bqc != NULL) {
 					if (bqc->last) {
 						pfree(bqc);
 					} else {
-						pfree((MinimalTuple *)bqc->ptr_value);
+						pfree(((MinimalTuple *)((PrlSortTuple *)bqc->ptr_value)->tuple));
+						pfree((PrlSortTuple *)bqc->ptr_value);
 						pfree(bqc);
 					}
 					bqc = bufferQueueGetNoSem(worker->work->workParams->bufferQueue);
 				}
-				destroyBufferQueue(worker->work->workParams->bufferQueue);
 				// remove from postmaster work list
 				shListRemove(prlJobsList, worker->work);
 				// remove from my list 
-				shListRemove(workersList, worker);
+				shListRemoveNoLock(workersList, worker);
 			}
 			SpinLockRelease(&worker->mutex);
 		}
+		SpinLockRelease(&workersList->mutex);
 	} 
 }
 
