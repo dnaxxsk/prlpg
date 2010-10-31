@@ -258,31 +258,44 @@ int slaveBackendMain(WorkDef * work) {
 	// handle ERROR
 	PG_exception_stack = &local_sigjmp_buf;
 	
-	waitForState(worker, PRL_WORKER_STATE_READY);
+	while (true) {
+		waitForState(worker, PRL_WORKER_STATE_READY);
 		
-	if (work->workType == PRL_WORK_TYPE_SORT) {
-		ereport(DEBUG_PRL2,(errmsg("Worker: Job = SORT")));
-		StartTransactionCommand();
-		ereport(DEBUG_PRL2,(errmsg("Worker: Job = SORT - transaction started")));
-		doSort(work, worker);
-		ereport(DEBUG_PRL2,(errmsg("Worker: Job = SORT - work done")));
-		CommitTransactionCommand();
-		ereport(DEBUG_PRL2,(errmsg("Worker: Job = SORT - transaction commited")));
-	} else if (work->workType == PRL_WORK_TYPE_QUERY) {
-		ereport(DEBUG_PRL2,(errmsg("Worker: Job = QUERY")));
-		doQuery(work, worker);
-		ereport(DEBUG_PRL2,(errmsg("Worker: Job = QUERY - work done")));
-	} else if (work->workType == PRL_WORK_TYPE_TEST) {
-		ereport(DEBUG_PRL2,(errmsg("Worker: Job = TEST")));
-		doTest(work, worker);
-		ereport(DEBUG_PRL2,(errmsg("Worker: Job = TEST - work done")));
+		MemoryContextSwitchTo(MessageContext);
+		MemoryContextResetAndDeleteChildren(MessageContext);
+			
+		if (work->workType == PRL_WORK_TYPE_SORT) {
+			ereport(DEBUG_PRL2,(errmsg("Worker: Job = SORT")));
+			StartTransactionCommand();
+			ereport(DEBUG_PRL2,(errmsg("Worker: Job = SORT - transaction started")));
+			doSort(work, worker);
+			ereport(DEBUG_PRL2,(errmsg("Worker: Job = SORT - work done")));
+			CommitTransactionCommand();
+			ereport(DEBUG_PRL2,(errmsg("Worker: Job = SORT - transaction commited")));
+		} else if (work->workType == PRL_WORK_TYPE_QUERY) {
+			ereport(DEBUG_PRL2,(errmsg("Worker: Job = QUERY")));
+			doQuery(work, worker);
+			ereport(DEBUG_PRL2,(errmsg("Worker: Job = QUERY - work done")));
+		} else if (work->workType == PRL_WORK_TYPE_TEST) {
+			ereport(DEBUG_PRL2,(errmsg("Worker: Job = TEST")));
+			doTest(work, worker);
+			ereport(DEBUG_PRL2,(errmsg("Worker: Job = TEST - work done")));
+		} else if (work->workType == PRL_WORK_TYPE_END) {
+			// special case of job whose purpose is to end
+			ereport(DEBUG_PRL2,(errmsg("Worker: Job = END")));
+			break;
+		}
+		ereport(DEBUG_PRL2,(errmsg("Worker: waiting for next job")));
+		
+		SpinLockAcquire(&worker->mutex);
+		worker->state = PRL_WORKER_STATE_END;
+		SpinLockRelease(&worker->mutex);
 	}
 	
-	ereport(DEBUG_PRL2,(errmsg("Worker: wait till the end")));
-	
 	SpinLockAcquire(&worker->mutex);
-	worker->state = PRL_WORKER_STATE_END;
+	worker->state = PRL_WORKER_STATE_DIED;
 	SpinLockRelease(&worker->mutex);
+	
 	ereport(DEBUG_PRL2,(errmsg("Worker: THE END")));
 	
 	return 0;
@@ -380,74 +393,128 @@ static void doQuery(WorkDef * work, Worker * worker) {
 	QueryParams * pars = work->workParams->queryParams;
 	StartTransactionCommand();
 	
-	oldcontext = MemoryContextSwitchTo(MessageContext);
-	parsetree_list = pg_parse_query(pars->query_string);
-	
-	MemoryContextSwitchTo(oldcontext);
-	
-	// here should be just one 
-	foreach(parsetree_item, parsetree_list)
-	{
-		Node *parsetree = (Node *) lfirst(parsetree_item);
-		bool snapshot_set= false;
-		List *querytree_list, *plantree_list;
+	if (pars->copyPlan) {
+		PlannedStmt * plStmt;
 		QueryDesc  *queryDesc;
 		ScanDirection direction;
 		long count;
 		long nprocessed;
 		PrlSendState * pss;
-		PlannedStmt * plannedStmt;
 		
-		CHECK_FOR_INTERRUPTS();
-		
-		if (analyze_requires_snapshot(parsetree)) {
-			PushActiveSnapshot(GetTransactionSnapshot());
-			snapshot_set = true;
-		}
-		
-		oldcontext = MemoryContextSwitchTo(MessageContext);
-
-		querytree_list = pg_analyze_and_rewrite(parsetree, pars->query_string, NULL, 0);
-
-		plantree_list = pg_plan_queries(querytree_list, 0, NULL);
-		
-		if (snapshot_set)
-			PopActiveSnapshot();
-
-		/* If we got a cancel signal in analysis or planning, quit */
-		CHECK_FOR_INTERRUPTS();
-		
-		plannedStmt = (PlannedStmt *) linitial(plantree_list);
-		if (prl_copy_plan) {
-			plannedStmt->planTree = copyObject(pars->subnode);
-		}
+		// load plan that master sent us
+		plStmt = makeNode(PlannedStmt);
+		plStmt->commandType = CMD_SELECT;
+		plStmt->hasReturning = false;
+		plStmt->canSetTag = true;
+		plStmt->transientPlan = false;
+		plStmt->planTree = copyObject(pars->subnode);
+		plStmt->rtable = copyObject(pars->rtable);
 		
 		PushActiveSnapshot(GetTransactionSnapshot());
-		queryDesc = CreateQueryDesc(plannedStmt,
-									pars->query_string,
-									GetActiveSnapshot(),
-									InvalidSnapshot,
-									None_Receiver,
-									NULL,
-									0);
-		
+		queryDesc = CreateQueryDesc(plStmt, NULL,
+				GetActiveSnapshot(), InvalidSnapshot, None_Receiver, 
+				NULL, 0);
+
 		ExecutorStart(queryDesc, 0);
-		
+
 		count = FETCH_ALL;
 		direction = ForwardScanDirection;
-		
-		// append our node
+
+		// append our sending node
 		pss = makeNode(PrlSendState);
 		pss->bufferQueue = worker->work->workParams->bufferQueue;
 		outerPlanState(pss) = queryDesc->planstate;
 		queryDesc->planstate = (PlanState*)pss;
-		
+
+		// execute the plan
 		ExecutorRun(queryDesc, direction, count);
 		nprocessed = queryDesc->estate->es_processed;
 		PopActiveSnapshot();
-		
+
 		ExecutorEnd(queryDesc);
 		FreeQueryDesc(queryDesc);
+	} else {
+	
+		oldcontext = MemoryContextSwitchTo(MessageContext);
+		parsetree_list = pg_parse_query(pars->query_string);
+		
+		MemoryContextSwitchTo(oldcontext);
+		
+		// here should be just one 
+		foreach(parsetree_item, parsetree_list)
+		{
+			Node *parsetree = (Node *) lfirst(parsetree_item);
+			bool snapshot_set= false;
+			List *querytree_list, *plantree_list;
+			QueryDesc  *queryDesc;
+			ScanDirection direction;
+			long count;
+			long nprocessed;
+			PrlSendState * pss;
+			PlannedStmt * plannedStmt;
+			PlannedStmt * plStmt;
+			
+			CHECK_FOR_INTERRUPTS();
+			
+			if (analyze_requires_snapshot(parsetree)) {
+				PushActiveSnapshot(GetTransactionSnapshot());
+				snapshot_set = true;
+			}
+			
+			oldcontext = MemoryContextSwitchTo(MessageContext);
+	
+			querytree_list = pg_analyze_and_rewrite(parsetree, pars->query_string, NULL, 0);
+	
+			plantree_list = pg_plan_queries(querytree_list, 0, NULL);
+			
+			if (snapshot_set)
+				PopActiveSnapshot();
+	
+			/* If we got a cancel signal in analysis or planning, quit */
+			CHECK_FOR_INTERRUPTS();
+			
+			plannedStmt = (PlannedStmt *) linitial(plantree_list);
+			if (prl_copy_plan) {
+				plStmt = makeNode(PlannedStmt);
+				plStmt->commandType = CMD_SELECT;
+				plStmt->hasReturning = false;
+				plStmt->canSetTag = true;
+				plStmt->transientPlan = false;
+				plStmt->planTree = copyObject(pars->subnode);
+				plStmt->rtable = copyObject(pars->rtable);
+				plannedStmt->planTree = copyObject(pars->subnode);
+				plannedStmt->rtable = copyObject(pars->rtable);
+			} else {
+				plStmt = plannedStmt;
+			}
+			
+			PushActiveSnapshot(GetTransactionSnapshot());
+			queryDesc = CreateQueryDesc(plStmt,
+										pars->query_string,
+										GetActiveSnapshot(),
+										InvalidSnapshot,
+										None_Receiver,
+										NULL,
+										0);
+			
+			ExecutorStart(queryDesc, 0);
+			
+			count = FETCH_ALL;
+			direction = ForwardScanDirection;
+			
+			// append our node
+			pss = makeNode(PrlSendState);
+			pss->bufferQueue = worker->work->workParams->bufferQueue;
+			outerPlanState(pss) = queryDesc->planstate;
+			queryDesc->planstate = (PlanState*)pss;
+			
+			ExecutorRun(queryDesc, direction, count);
+			nprocessed = queryDesc->estate->es_processed;
+			PopActiveSnapshot();
+			
+			ExecutorEnd(queryDesc);
+			FreeQueryDesc(queryDesc);
+		}
 	}
 	
 	CommitTransactionCommand();

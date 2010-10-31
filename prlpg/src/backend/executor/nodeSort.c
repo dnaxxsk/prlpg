@@ -88,6 +88,8 @@ ExecSort(SortState *node)
 		
 		for (i=0; i < prl_test_workers; i++) {
 			work = (WorkDef*)palloc(sizeof(WorkDef));
+			work->new = true;
+			work->hasWork = true;
 			work->workType = PRL_WORK_TYPE_TEST;
 			work->workParams = (WorkParams*)palloc(sizeof(WorkParams));
 			work->jobId = workersId;
@@ -230,6 +232,7 @@ ExecSort(SortState *node)
 			for (i=0; i < prl_level; i++) {
 				work = (WorkDef*)palloc(sizeof(WorkDef));
 				work->new = true;
+				work->hasWork = true;
 				work->workType = PRL_WORK_TYPE_SORT;
 				work->workParams = (WorkParams*)palloc(sizeof(WorkParams));
 				work->jobId = workersId;
@@ -251,7 +254,6 @@ ExecSort(SortState *node)
 					sortParams->nullsFirst[j] = plannode->nullsFirst[j];
 				}
 				work->workParams->sortParams = sortParams;
-				//work->workParams->workersList = workersList;
 				work->workParams->databaseId = MyProc->databaseId;
 				work->workParams->roleId = MyProc->roleId;
 				work->workParams->username = GetUserNameFromId(MyProc->roleId);
@@ -493,10 +495,31 @@ ExecEndSort(SortState *node)
 			SpinLockRelease(&workersList->mutex);
 			RESUME_INTERRUPTS();
 			
-			// pockam nez si to vsimnu
+			// pockam nez si to vsimnu 
 			waitForWorkers(jobId,workersCnt,PRL_WORKER_STATE_END);
 			
+			// pripravim ukoncovaci task
 			HOLD_INTERRUPTS();
+			SpinLockAcquire(&workersList->mutex);
+			foreach(lc, workersList->list) {
+				worker = (Worker *) lfirst(lc);
+				SpinLockAcquire(&worker->mutex);
+				if (worker->valid && worker->work->jobId == jobId) {
+					
+					destroyBufferQueue(worker->work->workParams->bufferQueue);
+					worker->state = PRL_WORKER_STATE_READY;
+					worker->work->workType = PRL_WORK_TYPE_END;
+				}
+				SpinLockRelease(&worker->mutex);
+			}
+			SpinLockRelease(&workersList->mutex);
+			RESUME_INTERRUPTS();
+			
+			// pockam az sa ukoncia
+			waitForWorkers(jobId, workersCnt, PRL_WORKER_STATE_DIED);
+			
+			// a zrusim vsetko
+			SpinLockAcquire(&workersList->mutex);
 			foreach(lc, workersList->list) {
 				worker = (Worker *) lfirst(lc);
 				SpinLockAcquire(&worker->mutex);
@@ -513,17 +536,14 @@ ExecEndSort(SortState *node)
 						}
 						bqc = bufferQueueGetNoSem(worker->work->workParams->bufferQueue);
 					}
-					destroyBufferQueue(worker->work->workParams->bufferQueue);
 					// remove from postmaster work list
 					shListRemove(prlJobsList, worker->work);
 					// remove from my list 
-					shListRemove(workersList, worker);
-					
+					shListRemoveNoLock(workersList, worker);
 				}
 				SpinLockRelease(&worker->mutex);
-				
 			}
-			RESUME_INTERRUPTS();
+			SpinLockRelease(&workersList->mutex);
 			
 			ereport(LOG,(errmsg("nodeSort - finished cleaning")));
 		}

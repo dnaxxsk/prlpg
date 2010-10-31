@@ -93,6 +93,10 @@ void shListRemove(SharedList * list, void * object) {
 	RESUME_INTERRUPTS();
 }
 
+void shListRemoveNoLock(SharedList * list, void * object) {
+	list->list = list_delete_ptr(list->list, object);
+}
+
 void shListAppendInt(SharedList * list, int value) {
 	MemoryContext oldContext;
 	oldContext = MemoryContextSwitchTo(ShmParallelContext);
