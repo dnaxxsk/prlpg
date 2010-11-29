@@ -516,7 +516,7 @@ ExecEndSort(SortState *node)
 			RESUME_INTERRUPTS();
 			
 			// pockam az sa ukoncia
-			waitForWorkers(jobId, workersCnt, PRL_WORKER_STATE_DIED);
+			waitForWorkers(jobId, workersCnt, PRL_WORKER_STATE_DEAD);
 			
 			// a zrusim vsetko
 			SpinLockAcquire(&workersList->mutex);

@@ -38,7 +38,7 @@ typedef enum {
 	PRL_WORKER_STATE_FINISHED_ACK, // master/konzument si vsimol ze worker uz dopracoval
 	PRL_WORKER_STATE_END, // worker sa ukoncil
 	PRL_WORKER_STATE_CANCELED, //
-	PRL_WORKER_STATE_DIED
+	PRL_WORKER_STATE_DEAD
 } PRL_WORKER_STATE;
 
 typedef enum {
