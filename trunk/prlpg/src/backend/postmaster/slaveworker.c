@@ -293,7 +293,7 @@ int slaveBackendMain(WorkDef * work) {
 	}
 	
 	SpinLockAcquire(&worker->mutex);
-	worker->state = PRL_WORKER_STATE_DIED;
+	worker->state = PRL_WORKER_STATE_DEAD;
 	SpinLockRelease(&worker->mutex);
 	
 	ereport(DEBUG_PRL2,(errmsg("Worker: THE END")));
