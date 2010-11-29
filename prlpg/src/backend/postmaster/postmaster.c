@@ -4343,7 +4343,7 @@ static void forkSlave(WorkDef * work) {
 	bn->pid = pid;
 	bn->cancel_key = MyCancelKey;
 	bn->is_autovacuum = false;
-	bn->dead_end = true;
+	//bn->dead_end = true;
 	DLAddHead(BackendList, DLNewElem(bn));
 	
 }
