@@ -555,7 +555,7 @@ InitPostgres(const char *in_dbname, Oid dboid, const char *username,
 		(void) GetTransactionSnapshot();
 	}
 	if (slaveWorker) {
-		ereport(LOG,(errmsg("Worker: Initializing - step 8-1")));
+		ereport(DEBUG_PRL1,(errmsg("Worker: Initializing - step 8-1")));
 	}
 	/*
 	 * Set up the global variables holding database id and default tablespace.
@@ -724,7 +724,7 @@ InitPostgres(const char *in_dbname, Oid dboid, const char *username,
 		am_superuser = superuser();
 	}
 	if (slaveWorker) {
-		ereport(LOG,(errmsg("Worker: Initializing - step 8-20")));
+		ereport(DEBUG_PRL1,(errmsg("Worker: Initializing - step 8-20")));
 	}
 
 	/* set up ACL framework (so CheckMyDatabase can check permissions) */

@@ -58,11 +58,7 @@ bool		log_lock_waits = false;
 /* Pointer to this process's PGPROC struct, if any */
 PGPROC	   *MyProc = NULL;
 
-// prace pre ktore treba workerov
-List * workDefList;
-// zoznam workerov
-List * masterWorkers;
-
+// Work definitions, masters add here and postmaster creates workers for them
 SharedList * prlJobsList;
 
 /*
@@ -134,7 +130,7 @@ ProcGlobalSemas(void)
 	 * We need a sema per backend (including autovacuum), plus one for each
 	 * auxiliary process.
 	 */
-	//TODO tato 4ka je iba docasna - presnejsie definovat pocet potrebnych semaforov
+	//TODO this "4" is temporary - move to parameters
 	return 4*(MaxBackends + NUM_AUXILIARY_PROCS);
 }
 
@@ -168,8 +164,6 @@ InitProcGlobal(void)
 	PGPROC	   *procs;
 	int			i;
 	bool		found;
-	MemoryContext oldcontext;
-	WorkDef * dummyWork;
 	
 	/* Create the ProcGlobal shared structure */
 	ProcGlobal = (PROC_HDR *)
@@ -241,11 +235,6 @@ InitProcGlobal(void)
 	ProcStructLock = (slock_t *) ShmemAlloc(sizeof(slock_t));
 	SpinLockInit(ProcStructLock);
 	
-	//TODO - revise this .. hopefully remove dummy ..
-	oldcontext = MemoryContextSwitchTo(ShmParallelContext);
-	dummyWork = palloc(sizeof(WorkDef));
-	workDefList = lappend(workDefList, dummyWork);
-	MemoryContextSwitchTo(oldcontext);
 }
 
 /*

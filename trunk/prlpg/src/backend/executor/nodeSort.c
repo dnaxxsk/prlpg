@@ -119,7 +119,7 @@ ExecSort(SortState *node)
 
 		}
 		
-		ereport(LOG,(errmsg("Master: Signalizing Postmaster")));
+		ereport(DEBUG_PRL1,(errmsg("Master: Signalizing Postmaster")));
 		SendPostmasterSignal(PMSIGNAL_START_PARALLEL_WORKERS);
 		
 		// wait until they are ready
@@ -148,7 +148,7 @@ ExecSort(SortState *node)
 		TupleDesc	tupDesc;
 		// this will identify workers used in this one sort task
 		long int workersId = random();
-		ereport(LOG,(errmsg("Master: Sort - jobId = %ld", workersId)));		
+		ereport(DEBUG_PRL1,(errmsg("Master: Sort - jobId = %ld", workersId)));
 
 		SO1_printf("ExecSort: %s\n",
 				   "sorting subplan");
@@ -183,7 +183,7 @@ ExecSort(SortState *node)
 		tuplesort_set_parallel(tuplesortstate, prl_on);
 		
 		if (!prl_on) {
-			ereport(LOG,(errmsg("nodeSort std - loading tuples")));
+			ereport(DEBUG_PRL1,(errmsg("nodeSort std - loading tuples")));
 			ii = 0;
 			for (;;)
 			{
@@ -194,12 +194,12 @@ ExecSort(SortState *node)
 			}
 			
 			
-			ereport(LOG, (errmsg("nodeSort std - before performsort")));
+			ereport(DEBUG_PRL1, (errmsg("nodeSort std - before performsort")));
 			/*
 			 * Complete the sort.
 			 */
 			tuplesort_performsort(tuplesortstate);
-			ereport(LOG, (errmsg("nodeSort std - after performsort")));
+			ereport(DEBUG_PRL1, (errmsg("nodeSort std - after performsort")));
 			/*
 			 * restore to user specified direction
 			 */
@@ -276,7 +276,7 @@ ExecSort(SortState *node)
 				oldContext = MemoryContextSwitchTo(ShmMessageContext);
 			}
 			
-			ereport(LOG,(errmsg("Master: Signalizing Postmaster")));
+			ereport(DEBUG_PRL1,(errmsg("Master: Signalizing Postmaster")));
 			SendPostmasterSignal(PMSIGNAL_START_PARALLEL_WORKERS);
 			
 			// wait until they are ready
@@ -287,7 +287,7 @@ ExecSort(SortState *node)
 			
 			// let them know to start working
 			stateTransition(workersId, PRL_WORKER_STATE_INITIAL, PRL_WORKER_STATE_READY);
-			ereport(LOG,(errmsg("nodeSort - before sending tuples to workers")));
+			ereport(DEBUG_PRL1,(errmsg("nodeSort - before sending tuples to workers")));
 			/*
 			 * Scan the subplan and feed all the tuples to tuplesort.
 			 */
@@ -303,14 +303,14 @@ ExecSort(SortState *node)
 				MemoryContextSwitchTo(oldContext);
 			}
 			
-			ereport(LOG,(errmsg("nodeSort - waiting until workers finish the job.")));
+			ereport(DEBUG_PRL1,(errmsg("nodeSort - waiting until workers finish the job.")));
 			// wait until they finish the job
 			waitForWorkers(workersId, prl_level, PRL_WORKER_STATE_FINISHED);
 	
-			ereport(LOG,(errmsg("nodeSort - workers finished the job.")));
+			ereport(DEBUG_PRL1,(errmsg("nodeSort - workers finished the job.")));
 			// get the slaves ready for sending results
 			stateTransition(workersId, PRL_WORKER_STATE_FINISHED, PRL_WORKER_STATE_FINISHED_ACK);
-			ereport(LOG,(errmsg("nodeSort - workers set to FINISHED_ACK")));
+			ereport(DEBUG_PRL1,(errmsg("nodeSort - workers set to FINISHED_ACK")));
 	
 			// fetch also first from each worker
 			prepareForMerge(tuplesortstate);
@@ -335,9 +335,9 @@ ExecSort(SortState *node)
 
 	prl_on = tuplesort_is_parallel(tuplesortstate);
 	if (InterruptHoldoffCount > 0) {
-		ereport(DEBUG1,(errmsg("Master - Signals blocked.")));
+		ereport(DEBUG_PRL2,(errmsg("Master - Signals blocked.")));
 	} else {
-		ereport(DEBUG1,(errmsg("Master - Signals OK.")));
+		ereport(DEBUG_PRL2,(errmsg("Master - Signals OK.")));
 	}
 	/*
 	 * Get the first or next tuple from tuplesort. Returns NULL if no more
@@ -447,7 +447,7 @@ ExecEndSort(SortState *node)
 	long int jobId = 0;
 	SO1_printf("ExecEndSort: %s\n",
 			   "shutting down sort node");
-	ereport(LOG,(errmsg("nodeSort - ExecEndSort")));
+	ereport(DEBUG_PRL1,(errmsg("nodeSort - ExecEndSort")));
 	/*
 	 * clean out the tuple table
 	 */
@@ -464,7 +464,7 @@ ExecEndSort(SortState *node)
 		if (prl_on) {
 			jobId = tuplesort_get_workersId(node->tuplesortstate);
 			workersCnt = tuplesort_get_prl_level(node->tuplesortstate);
-			ereport(LOG,(errmsg("nodeSort - try cleaning")));
+			ereport(DEBUG_PRL1,(errmsg("nodeSort - try cleaning")));
 			HOLD_INTERRUPTS();
 			SpinLockAcquire(&workersList->mutex);
 			foreach(lc, workersList->list) {
@@ -473,7 +473,7 @@ ExecEndSort(SortState *node)
 				if (worker->valid && worker->state != PRL_WORKER_STATE_END && worker->work->jobId == jobId) {
 					lastValue = bufferQueueSetStop(worker->work->workParams->bufferQueue, true);
 					if (!lastValue) {
-						ereport(LOG,(errmsg("nodeSort - clearing one value from queue so worker can notice stop")));
+						ereport(DEBUG_PRL1,(errmsg("nodeSort - clearing one value from queue so worker can notice stop")));
 						// clear at least one value, so they have a chance to notice the end
 						// sender did not send all tuples ...
 						// he might be stuck on semaphore
@@ -495,10 +495,10 @@ ExecEndSort(SortState *node)
 			SpinLockRelease(&workersList->mutex);
 			RESUME_INTERRUPTS();
 			
-			// pockam nez si to vsimnu 
+			// wait for them to notice the change
 			waitForWorkers(jobId,workersCnt,PRL_WORKER_STATE_END);
 			
-			// pripravim ukoncovaci task
+			// prepare ending task
 			HOLD_INTERRUPTS();
 			SpinLockAcquire(&workersList->mutex);
 			foreach(lc, workersList->list) {
@@ -515,16 +515,16 @@ ExecEndSort(SortState *node)
 			SpinLockRelease(&workersList->mutex);
 			RESUME_INTERRUPTS();
 			
-			// pockam az sa ukoncia
+			// wait until they all end
 			waitForWorkers(jobId, workersCnt, PRL_WORKER_STATE_DEAD);
 			
-			// a zrusim vsetko
+			// release all
 			SpinLockAcquire(&workersList->mutex);
 			foreach(lc, workersList->list) {
 				worker = (Worker *) lfirst(lc);
 				SpinLockAcquire(&worker->mutex);
 				if (worker->valid && worker->work->jobId == jobId) {
-					ereport(LOG,(errmsg("nodeSort - performing one bufferqueue cleaning")));
+					ereport(DEBUG_PRL1,(errmsg("nodeSort - performing one bufferqueue cleaning")));
 					bqc = bufferQueueGetNoSem(worker->work->workParams->bufferQueue);
 					while (bqc != NULL) {
 						if (bqc->last) {
@@ -545,7 +545,7 @@ ExecEndSort(SortState *node)
 			}
 			SpinLockRelease(&workersList->mutex);
 			
-			ereport(LOG,(errmsg("nodeSort - finished cleaning")));
+			ereport(DEBUG_PRL1,(errmsg("nodeSort - finished cleaning")));
 		}
 		
 		tuplesort_end((Tuplesortstate *) node->tuplesortstate);

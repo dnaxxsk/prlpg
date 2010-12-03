@@ -129,9 +129,7 @@ static void * ShmAlloc(MemoryContext context, Size size) {
 		ereport(WARNING,(errmsg("mm_malloc failed .. probably not wenough shared memory")));
 		return NULL;
 	}
-	//ereport(LOG,(errmsg("cheerfull alloc %p", block)));
 	block->sctx = ctx;
-	//block->size = size;
 	block->prev = NULL;
 	chunk = (AllocChunk) ((char *)block +  ALLOC_BLOCKHDRSZ);
 	chunk->sctx = ctx;
@@ -182,8 +180,7 @@ static void ShmFreeAlloc(MemoryContext context, void * pointer) {
 	return;
 }
 
-// Toto nemoze fungovat ...
-// pointer je obaleny AllocBlokom ... 
+// This is here only for testing purposes, we do not actually support reallocation right now!
 static void * ShmRealloc(MemoryContext context, void * pointer, Size size) {
 	ShmCtx ctx = (ShmCtx) context;
 	
@@ -199,7 +196,7 @@ static void ShmInit(MemoryContext context) {
 	// empty
 }
 
-// Dalsia velmi pochybna metoda ...
+// Reset context
 static void ShmReset(MemoryContext context) {
 	ShmCtx ctx = (ShmCtx) context;
 	AllocBlock block = ctx->box->blocks;

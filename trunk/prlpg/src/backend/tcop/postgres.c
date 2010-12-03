@@ -2691,7 +2691,7 @@ StatementCancelHandler(SIGNAL_ARGS)
 {
 	int			save_errno = errno;
 
-	ereport(LOG,(errmsg("Master: Statement cancel handler")));
+	ereport(DEBUG_PRL1,(errmsg("Master: Statement cancel handler")));
 	
 	/*
 	 * Don't joggle the elbow of proc_exit

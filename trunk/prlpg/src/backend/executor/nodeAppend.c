@@ -215,7 +215,7 @@ ExecAppend(AppendState *node)
 		pas->worksDone = 0;
 		node->prl_append_state = (void *) pas;
 		
-		ereport(LOG,(errmsg("NodeAppend - start.")));
+		ereport(DEBUG_PRL1,(errmsg("NodeAppend - start.")));
 		
 		if (isPrlSqlOn) {
 			long int jobId = random();
@@ -435,7 +435,7 @@ ExecAppend(AppendState *node)
 				return ExecClearTuple(node->ps.ps_ResultTupleSlot);
 	
 			/* Else loop back and try to get a tuple from the new subplan */
-			ereport(LOG,(errmsg("NodeAppend - going for next subplan")));
+			ereport(DEBUG_PRL1,(errmsg("NodeAppend - going for next subplan")));
 		}
 	}
 }
@@ -529,7 +529,7 @@ ExecEndAppend(AppendState *node)
 			worker = (Worker *) lfirst(lc);
 			SpinLockAcquire(&worker->mutex);
 			if (worker->valid && worker->work->jobId == jobId) {
-				ereport(LOG,(errmsg("nodeAppend - performing one bufferqueue cleaning")));
+				ereport(DEBUG_PRL1,(errmsg("nodeAppend - performing one bufferqueue cleaning")));
 				bqc = bufferQueueGetNoSem(worker->work->workParams->bufferQueue);
 				while (bqc != NULL) {
 					if (bqc->last) {

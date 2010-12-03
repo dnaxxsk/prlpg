@@ -974,7 +974,7 @@ tuplesort_puttupleslot_prl(Tuplesortstate *state, PrlSortTuple *slot)
 	//stup.datum1 = slot->datum1;
 	stup.isnull1 = slot->isnull1;
 	computeDatum1(state, &stup);
-	ereport(DEBUG1,(errmsg("ComputeDatum1 %ld", stup.datum1)));
+	ereport(DEBUG_PRL1,(errmsg("ComputeDatum1 %ld", stup.datum1)));
 
 	puttuple_common(state, &stup);
 
@@ -1104,7 +1104,7 @@ puttuple_common(Tuplesortstate *state, SortTuple *tuple)
 			if (state->memtupcount < state->memtupsize && !LACKMEM(state))
 				return;
 
-			ereport(LOG,(errmsg("puttuple_common - wont fit in memory going to external sort.")));
+			ereport(DEBUG_PRL1,(errmsg("puttuple_common - wont fit in memory going to external sort.")));
 			/*
 			 * Nope; time to switch to tape-based operation.
 			 */
@@ -1290,8 +1290,8 @@ tuplesort_gettuple_common(Tuplesortstate *state, bool forward,
 				 * originally asked for in a bounded sort.	This is because
 				 * returning EOF here might be the wrong thing.
 				 */
-				if (state->bounded && state->current >= state->bound)
-					//elog(ERROR, "retrieved too many tuples in a bounded sort");
+				if (state->bounded && state->current >= state->bound && !isSlaveWorker())
+					elog(ERROR, "retrieved too many tuples in a bounded sort");
 
 				return false;
 			}
@@ -1496,24 +1496,19 @@ bool prl_tuplesort_getsorttuple(Tuplesortstate * state, bool forward, PrlSortTup
 	MemoryContext oldcontext = MemoryContextSwitchTo(state->sortcontext);
 	SortTuple stup;
 	bool should_free;
-//	ereport(DEBUG1,(errmsg("Worker-doSort: prl_tuplesort_getsorttuple - before getting from common")));
 	if (!tuplesort_gettuple_common(state, forward, &stup, &should_free))
 		stup.tuple = NULL;
 
 	MemoryContextSwitchTo(oldcontext);
 	
-//	ereport(DEBUG1,(errmsg("Worker-doSort: prl_tuplesort_getsorttuple - after getting from common")));
 	if (stup.tuple) {
 		// COPY to shared memory so i can send it back to master
 		pstup->tuple = (void *)heap_copy_minimal_tuple(stup.tuple);
 		pstup->isnull1 = stup.isnull1;
-//		ereport(DEBUG1,(errmsg("Worker-doSort: prl_tuplesort_getsorttuple - copied to output")));
 		
 		pfree(stup.tuple);
-//		ereport(DEBUG1,(errmsg("Worker-doSort: prl_tuplesort_getsorttuple - freed")));
 		return true;
 	} else {
-//		ereport(DEBUG1,(errmsg("Worker-doSort: prl_tuplesort_getsorttuple - nothing in tuple")));
 		return false;
 	}
 }
@@ -2754,7 +2749,6 @@ computeDatum1(Tuplesortstate *state, SortTuple * stup) {
 								state->scanKeys[0].sk_attno,
 								state->tupDesc,
 								&stup->isnull1);
-//	ereport(DEBUG1,(errmsg("ComputeDatum1 %ld", stup->datum1)));
 }
 
 static void
@@ -3251,7 +3245,7 @@ void distributeToWorker(Tuplesortstate * state, TupleTableSlot * slot,
 	if (last == true) {
 		// send last to all workers
 		for (i = 0; i < state->workersCnt; ++i) {
-			ereport(LOG,(errmsg("nodeSort - last tuple - sending ending tuple to worker.")));
+			ereport(DEBUG_PRL1,(errmsg("nodeSort - last tuple - sending ending tuple to worker.")));
 			// workers will deallocate it .. 
 			bqc = (BufferQueueCell *)palloc(sizeof(BufferQueueCell));
 			bqc->last = true;
@@ -3285,7 +3279,6 @@ bool tuplesort_gettupleslot_from_worker(Tuplesortstate * state, bool forward, Tu
 	MemoryContext oldcontext;
 	SortTuple stup;
 	SortTuple new_stup;
-//	ereport(DEBUG1,(errmsg("Master - tuplesort_gettupleslot_from_worker - before test")));
 	if (state->isParallelEnded) {
 		ExecClearTuple(slot);
 		return false;
@@ -3395,31 +3388,9 @@ void preForMergeMultiLTS(Tuplesortstate * state, bool forward) {
 	SortTuple stup;
 	bool		should_free;
 	int clts = 0;
-	/*
-	 MemoryContext oldcontext = MemoryContextSwitchTo(state->sortcontext);
-	SortTuple	stup;
-	bool		should_free;
-
-	if (!tuplesort_gettuple_common(state, forward, &stup, &should_free))
-		stup.tuple = NULL;
-
-	MemoryContextSwitchTo(oldcontext);
-
-	if (stup.tuple)
-	{
-		ExecStoreMinimalTuple((MinimalTuple) stup.tuple, slot, should_free);
-		return true;
-	}
-	else
-	{
-		ExecClearTuple(slot);
-		return false;
-	}
-	 */
 	
 	for (clts = 0; clts < state->workersCnt; ++clts) {
 		if (!tuplesort_gettuple_common(state->worker_states[clts], forward, &stup, &should_free)) {
-			//stup.tuple = NULL;
 			state->workersFinished[clts] = true;
 		} else {
 			tuplesort_heap_insert(state, &stup, clts, false);

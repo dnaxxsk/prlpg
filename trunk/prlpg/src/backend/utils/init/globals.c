@@ -106,7 +106,7 @@ int			maintenance_work_mem = 16384;
 int			NBuffers = 1000;
 int			MaxBackends = 100;
 int			MaxConnections = 90;
-int			MaxPrlSems = 100; // maximalny pocet semaforov pre paralelne spracovanie
+int			MaxPrlSems = 100; //max number for parallel semaphores - should be in parameters
 
 int			VacuumCostPageHit = 1;		/* GUC parameters for vacuum */
 int			VacuumCostPageMiss = 10;
