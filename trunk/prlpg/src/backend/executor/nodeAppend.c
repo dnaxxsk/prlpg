@@ -341,9 +341,9 @@ ExecAppend(AppendState *node)
 				return ExecClearTuple(node->ps.ps_ResultTupleSlot);
 			}
 			
-			// posun na dalsieho, cyklicky
+			// move to next worker
 			i = (i+1)% pas->workersCnt;
-			// ak este neskoncil
+			// they might have all finished
 			if (!pas->workersFinished[i]) {
 				bqc = bufferQueueGet(pas->workers[i]->work->workParams->bufferQueue, false);
 				if (bqc != NULL) {
@@ -503,7 +503,7 @@ ExecEndAppend(AppendState *node)
 		
 		waitForWorkers(jobId,workersCnt,PRL_WORKER_STATE_END);
 		
-		// pripravim ukoncovaci task
+		// prepare ending task
 		HOLD_INTERRUPTS();
 		SpinLockAcquire(&workersList->mutex);
 		foreach(lc, workersList->list) {
@@ -520,10 +520,10 @@ ExecEndAppend(AppendState *node)
 		SpinLockRelease(&workersList->mutex);
 		RESUME_INTERRUPTS();
 		
-		// pockam az sa ukoncia
+		// wait until they sto using shared resources
 		waitForWorkers(jobId, workersCnt, PRL_WORKER_STATE_DEAD);
 
-		// a zrusim vsetko
+		// release resources
 		SpinLockAcquire(&workersList->mutex);
 		foreach(lc, workersList->list) {
 			worker = (Worker *) lfirst(lc);
