@@ -67,7 +67,7 @@ void
 WorkerStatementCancelHandler(SIGNAL_ARGS)
 {
 	int			save_errno = errno;
-	ereport(LOG,(errmsg("Worker: Statement cancel")));
+	ereport(DEBUG_PRL1,(errmsg("Worker: Statement cancel")));
 
 	/*
 	 * Don't joggle the elbow of proc_exit
@@ -101,11 +101,8 @@ WorkerStatementCancelHandler(SIGNAL_ARGS)
 
 int slaveBackendMain(WorkDef * work) {
 	Worker * worker;
-//	char	   *dbname;
 	sigjmp_buf	local_sigjmp_buf;
 	
-	// wait one minute so i can attach if i want to ..
-	//pg_usleep(60*1000000L);
 	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 1")));
 	set_ps_display("startup-slave", false);
 	
@@ -133,9 +130,6 @@ int slaveBackendMain(WorkDef * work) {
 	 * of output during who-knows-what operation...
 	 */
 	pqsignal(SIGPIPE, SIG_IGN);
-	// FIXME : zachytavat aj tieto a osetrovat ich 
-	//pqsignal(SIGUSR1, CatchupInterruptHandler);
-	//pqsignal(SIGUSR2, NotifyInterruptHandler);
 	pqsignal(SIGFPE, FloatExceptionHandler);
 	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 5")));
 	/*
@@ -153,8 +147,6 @@ int slaveBackendMain(WorkDef * work) {
 	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 7")));
 	InitProcess();
 	ereport(DEBUG_PRL2,(errmsg("Worker: Initializing - step 8")));
-	// po Inite uz mam pgproc so semaforom kde mozem cakat na pracu ...
-	// neprijimalo to SIGINT ked ho canceloval master
 	PG_SETMASK(&UnBlockSig);
 	//here I should get masters dbname and username
 	InitPostgres(NULL, work->workParams->databaseId, work->workParams->username, NULL);
@@ -175,11 +167,7 @@ int slaveBackendMain(WorkDef * work) {
 	worker->state = PRL_WORKER_STATE_INITIAL;
 	SpinLockRelease(&worker->mutex);
 
-	ereport(LOG,(errmsg("Worker: Initialized")));
-	
-	//pg_usleep(60 * 1000000L);
-	
-	//shListAppend(work->workParams->workersList, worker);
+	ereport(DEBUG_PRL1,(errmsg("Worker: Initialized")));
 	
 	MessageContext = AllocSetContextCreate(TopMemoryContext,
 										  "MessageContext",
@@ -380,7 +368,6 @@ static void doSort(WorkDef * work, Worker * worker) {
 		}
 	}
 	tuplesort_end(tuplesortstate);
-	//printAddUsage();
 	MemoryContextSwitchTo(oldContext);
 	
 	ereport(DEBUG_PRL2,(errmsg("Worker-doSort: end")));
@@ -557,7 +544,7 @@ static void doTest(WorkDef * work, Worker * worker) {
 			gettimeofday(&tv, NULL);
 			duration_s2 = tv.tv_sec - duration_s2; 
 			duration_u2 = duration_s2 * 1000000 + tv.tv_usec - duration_u2;
-			ereport(LOG,(errmsg("Worker-doTest alloc n.%d, Cycle=%d, chunks=%d of size=%d took %ld.%06ld seconds", 
+			ereport(DEBUG_PRL1,(errmsg("Worker-doTest alloc n.%d, Cycle=%d, chunks=%d of size=%d took %ld.%06ld seconds",
 							pars->type, i, pars->chunk_cnt, pars->chunk_size, duration_u2 / 1000000, duration_u2 % 1000000)));
 			
 			gettimeofday(&tv, NULL);
@@ -572,13 +559,13 @@ static void doTest(WorkDef * work, Worker * worker) {
 			gettimeofday(&tv, NULL);
 			duration_s2 = tv.tv_sec - duration_s2; 
 			duration_u2 = duration_s2 * 1000000 + tv.tv_usec - duration_u2;
-			ereport(LOG,(errmsg("Worker-doTest free n.%d, Cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds", 
+			ereport(DEBUG_PRL1,(errmsg("Worker-doTest free n.%d, Cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds",
 							pars->type, i, pars->chunk_cnt, pars->chunk_size, duration_u2 / 1000000, duration_u2 % 1000000)));
 		}
 		gettimeofday(&tv, NULL);
 		duration_s = tv.tv_sec - duration_s; 
 		duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
-		ereport(LOG,(errmsg("Worker-doTest n.%d, cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds", 
+		ereport(DEBUG_PRL1,(errmsg("Worker-doTest n.%d, cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds",
 				pars->type, pars->cycles, pars->chunk_cnt, pars->chunk_size, duration_u / 1000000, duration_u % 1000000)));
 		MemoryContextSwitchTo(oldContext);
 	} else if (pars->type == 2) {
@@ -603,7 +590,7 @@ static void doTest(WorkDef * work, Worker * worker) {
 			gettimeofday(&tv, NULL);
 			duration_s2 = tv.tv_sec - duration_s2;
 			duration_u2 = duration_s2 * 1000000 + tv.tv_usec - duration_u2;
-			ereport(LOG,(errmsg("Worker-doTest alloc n.%d, Cycle=%d, chunks=%d of size=%d took %ld.%06ld seconds",
+			ereport(DEBUG_PRL1,(errmsg("Worker-doTest alloc n.%d, Cycle=%d, chunks=%d of size=%d took %ld.%06ld seconds",
 									pars->type, i, pars->chunk_cnt, pars->chunk_size, duration_u2 / 1000000, duration_u2 % 1000000)));
 
 			gettimeofday(&tv, NULL);
@@ -618,13 +605,13 @@ static void doTest(WorkDef * work, Worker * worker) {
 			gettimeofday(&tv, NULL);
 			duration_s2 = tv.tv_sec - duration_s2; 
 			duration_u2 = duration_s2 * 1000000 + tv.tv_usec - duration_u2;
-			ereport(LOG,(errmsg("Worker-doTest free n.%d, Cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds",
+			ereport(DEBUG_PRL1,(errmsg("Worker-doTest free n.%d, Cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds",
 									pars->type, i, pars->chunk_cnt, pars->chunk_size, duration_u2 / 1000000, duration_u2 % 1000000)));
 		}
 		gettimeofday(&tv, NULL);
 		duration_s = tv.tv_sec - duration_s; 
 		duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
-		ereport(LOG,(errmsg("Worker-doTest n.%d, cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds",
+		ereport(DEBUG_PRL1,(errmsg("Worker-doTest n.%d, cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds",
 								pars->type, pars->cycles, pars->chunk_cnt, pars->chunk_size, duration_u / 1000000, duration_u % 1000000)));
 		MemoryContextSwitchTo(oldContext);
 	} else if (pars->type == 3) {
@@ -650,7 +637,7 @@ static void doTest(WorkDef * work, Worker * worker) {
 			gettimeofday(&tv, NULL);
 			duration_s2 = tv.tv_sec - duration_s2;
 			duration_u2 = duration_s2 * 1000000 + tv.tv_usec - duration_u2;
-			ereport(LOG,(errmsg("Worker-doTest alloc n.%d, Cycle=%d, chunks=%d of size=%d took %ld.%06ld seconds",
+			ereport(DEBUG_PRL1,(errmsg("Worker-doTest alloc n.%d, Cycle=%d, chunks=%d of size=%d took %ld.%06ld seconds",
 									pars->type, i, pars->chunk_cnt, pars->chunk_size, duration_u2 / 1000000, duration_u2 % 1000000)));
 
 			gettimeofday(&tv, NULL);
@@ -658,22 +645,20 @@ static void doTest(WorkDef * work, Worker * worker) {
 			duration_s2 = tv.tv_sec;
 
 			for (j = 0; j < pars->chunk_cnt; j++) {
-				//pfree(array[j]);
 				ShmParallelContext->methods->realloc(ShmParallelContext, array[j], 0);
 			}
 			ShmParallelContext->methods->realloc(ShmParallelContext, array, 0);
-			//pfree(array);
 
 			gettimeofday(&tv, NULL);
 			duration_s2 = tv.tv_sec - duration_s2;
 			duration_u2 = duration_s2 * 1000000 + tv.tv_usec - duration_u2;
-			ereport(LOG,(errmsg("Worker-doTest free n.%d, Cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds",
+			ereport(DEBUG_PRL1,(errmsg("Worker-doTest free n.%d, Cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds",
 									pars->type, i, pars->chunk_cnt, pars->chunk_size, duration_u2 / 1000000, duration_u2 % 1000000)));
 		}
 		gettimeofday(&tv, NULL);
 		duration_s = tv.tv_sec - duration_s;
 		duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
-		ereport(LOG,(errmsg("Worker-doTest n.%d, cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds",
+		ereport(DEBUG_PRL1,(errmsg("Worker-doTest n.%d, cycles=%d, chunks=%d of size=%d took %ld.%06ld seconds",
 								pars->type, pars->cycles, pars->chunk_cnt, pars->chunk_size, duration_u / 1000000, duration_u % 1000000)));
 		MemoryContextSwitchTo(oldContext);
 	}

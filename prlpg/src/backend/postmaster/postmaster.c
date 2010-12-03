@@ -4191,10 +4191,10 @@ sigusr1_handler(SIGNAL_ARGS)
 	
 	if (CheckPostmasterSignal(PMSIGNAL_CANCEL_PARALLEL_WORKERS)) 
 	{
-		ereport(LOG,(errmsg("Postmaster: cancel workers signal found")));
+		ereport(DEBUG_PRL1,(errmsg("Postmaster: cancel workers signal found")));
 		cancel_pg_workers = true;
 	} else {
-		ereport(LOG,(errmsg("Postmaster: cancel workers signal NOT found")));
+		ereport(DEBUG_PRL1,(errmsg("Postmaster: cancel workers signal NOT found")));
 	}
 
 	PG_SETMASK(&UnBlockSig);
@@ -4215,7 +4215,7 @@ static void StartParallelWorkers(void) {
 				work->new = false;
 				SpinLockRelease(&prlJobsList->mutex);
 				found = true;
-				ereport(LOG,(errmsg("PostMaster: Received signal - starting worker. %s", work->workParams->username)));
+				ereport(DEBUG_PRL1,(errmsg("PostMaster: Received signal - starting worker. %s", work->workParams->username)));
 				forkSlave(work);
 				continue;
 			}
@@ -4234,7 +4234,7 @@ static void CancelParallelWorkers(void) {
 		
 	foreach(lc, workersToCancel->list) {
 		workerPid = (pid_t) lfirst_int(lc);
-		ereport(LOG,(errmsg("PostMaster: Signal children to cancel query. %d", workerPid)));
+		ereport(DEBUG_PRL1,(errmsg("PostMaster: Signal children to cancel query. %d", workerPid)));
 		signal_child(workerPid, SIGINT);
 	}
 	list_free(workersToCancel->list);
@@ -4267,26 +4267,8 @@ static void forkSlave(WorkDef * work) {
 	
 	bn->cancel_key = MyCancelKey;
 	
-	/*port->canAcceptConnections = canAcceptConnections();
-	bn->dead_end = (port->canAcceptConnections != CAC_OK &&
-					port->canAcceptConnections != CAC_WAITBACKUP);
-	*/
 	bn->dead_end = false;
 	bn->child_slot = MyPMChildSlot = AssignPostmasterChildSlot();
-	
-	/*
-	 * Unless it's a dead_end child, assign it a child slot number
-
-	if (!bn->dead_end) {
-		ereport(LOG,(errmsg("slave not dead end")));
-		bn->child_slot = MyPMChildSlot = AssignPostmasterChildSlot();
-		ereport(LOG,(errmsg("child slot assigned as %d", bn->child_slot )));
-	} else {
-		ereport(LOG,(errmsg("slave is dead end")));
-		bn->child_slot = 0;
-	}
-	 */	
-//	work->state = PRL_STATE_FORKED;
 
 	pid = fork_process();
 	if (pid == 0) /* child */
@@ -4310,9 +4292,6 @@ static void forkSlave(WorkDef * work) {
 		/* Close the postmaster's sockets */
 		ClosePostmasterPorts(false);
 
-		/* Perform additional initialization and client authentication */
-		//BackendInitialize(port);
-
 		MemoryContextSwitchTo(TopMemoryContext);
 		MemoryContextDelete(PostmasterContext);
 		PostmasterContext = NULL;
@@ -4329,13 +4308,11 @@ static void forkSlave(WorkDef * work) {
 		errno = save_errno;
 		ereport(LOG,
 				(errmsg("could not fork new slave process for connection: %m")));
-		//report_fork_failure_to_client(port, save_errno);
-//		return STATUS_ERROR;
 		return;
 	}
 
 	/* in parent, successful fork */
-	ereport(DEBUG2, (errmsg_internal("forked new backend, pid=%d", (int) pid)));
+	ereport(DEBUG_PRL1, (errmsg_internal("forked new backend, pid=%d", (int) pid)));
 	/*
 	 * Everything's been successful, it's safe to add this backend to our list
 	 * of backends.
@@ -4343,7 +4320,6 @@ static void forkSlave(WorkDef * work) {
 	bn->pid = pid;
 	bn->cancel_key = MyCancelKey;
 	bn->is_autovacuum = false;
-	//bn->dead_end = true;
 	DLAddHead(BackendList, DLNewElem(bn));
 	
 }

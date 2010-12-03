@@ -18,7 +18,7 @@ TupleTableSlot *ExecPrlSend(PrlSendState *node) {
 	duration_u = tv.tv_usec;
 	duration_s = tv.tv_sec;
 	
-	ereport(LOG,(errmsg("NodePrlSend - start")));
+	ereport(DEBUG_PRL1,(errmsg("NodePrlSend - start")));
 	outerNode = outerPlanState(node);
 	for (;;) {
 		slot = ExecProcNode(outerNode);
@@ -41,13 +41,12 @@ TupleTableSlot *ExecPrlSend(PrlSendState *node) {
 			MemoryContextSwitchTo(oldContext);
 			break;
 		}
-		// how to get disposed of that "slot" containing the data in a correct way?
 		MemoryContextSwitchTo(oldContext);
 	}
 	gettimeofday(&tv, NULL);
 	duration_s = tv.tv_sec - duration_s; 
 	duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
-	ereport(LOG,(errmsg("NodePrlSend - end - took %ld.%06ld seconds", duration_u / 1000000, duration_u % 1000000)));
+	ereport(DEBUG_PRL1,(errmsg("NodePrlSend - end - took %ld.%06ld seconds", duration_u / 1000000, duration_u % 1000000)));
 	
 	return NULL;
 }

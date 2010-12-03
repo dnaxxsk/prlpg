@@ -31,14 +31,14 @@ extern bool prl_copy_plan;
 
 typedef enum {
 	PRL_WORKER_STATE_NONE, // initial state set in master before request send to postmaster
-	PRL_WORKER_STATE_INITIAL, // proces caka na pracu, napr ihned po forknuti
-	PRL_WORKER_STATE_READY, // master mu nastavi pracu
-	PRL_WORKER_STATE_WORKING, // worker si vsimol ze ma pracu a pracuje
-	PRL_WORKER_STATE_FINISHED, // worker uz dopracoval
-	PRL_WORKER_STATE_FINISHED_ACK, // master/konzument si vsimol ze worker uz dopracoval
-	PRL_WORKER_STATE_END, // worker sa ukoncil
-	PRL_WORKER_STATE_CANCELED, //
-	PRL_WORKER_STATE_DEAD
+	PRL_WORKER_STATE_INITIAL, // worker waits for work
+	PRL_WORKER_STATE_READY, // master has set work for worker
+	PRL_WORKER_STATE_WORKING, // worker is working
+	PRL_WORKER_STATE_FINISHED, // worker has finished
+	PRL_WORKER_STATE_FINISHED_ACK, // master has noticed that workers have finished
+	PRL_WORKER_STATE_END, // worker has ended
+	PRL_WORKER_STATE_CANCELED, // cancelled
+	PRL_WORKER_STATE_DEAD // dead worker
 } PRL_WORKER_STATE;
 
 typedef enum {
@@ -48,7 +48,6 @@ typedef enum {
 	,PRL_WORK_TYPE_END
 } PRL_WORK_TYPE;
 
-//typedef struct SharedList SharedList;
 typedef struct SharedList 
 {
 	List * list;
@@ -68,7 +67,7 @@ typedef struct WorkParams
 } WorkParams;
 
 /**
- * This structure is not being used sofar
+ * This structure is not used
  */
 typedef struct WorkResult
 {
@@ -99,15 +98,14 @@ typedef struct WorkDef
 } WorkDef;
 
 typedef struct SortParams {
-	// tieto su potrebne v tuple_sort_begin_heap
+	// extracted from tuple_sort_begin_heap
 	TupleDesc	tupDesc; // created by existing copy function 
 	int			numCols;
-	AttrNumber *sortColIdx; // numCols je velkost tychto poli
+	AttrNumber *sortColIdx; // numCols is size of these arrays
 	Oid		   *sortOperators;
 	bool	   *nullsFirst;
-	int			work_mem; // toto zrejme nie, pretoze slave ma vlastnu velkost pamate
+	int			work_mem; // this probably should not be used
 	bool		randomAccess;	/* need random access to sort output? */
-	// tuple_sort_set_bounded
 	bool		bounded;		/* is the result set bounded? */
 	bool 		forward;
 	int64		bound;
@@ -137,8 +135,6 @@ extern SharedList * workersList;
 extern SharedList * workersToCancel;
 
 extern void parallel_init(void);
-
-//extern bool prepareSlaves(int i);
 
 extern SharedList * createShList(void);
 extern void shListAppend(SharedList * list, void * object);
@@ -213,9 +209,6 @@ extern void cancelWorkers(void);
 
 // returns number of workers which changed the state
 extern int stateTransition(long int jobId, PRL_WORKER_STATE oldState, PRL_WORKER_STATE newState);
-
-//extern void printAddUsage(void);
-//extern void printGetUsage(void);
 
 extern void cleanup(void);
 #endif

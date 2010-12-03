@@ -41,22 +41,19 @@ int prl_queue_item_size = -1;
 
 bool prl_copy_plan = false;
 
-// poziadavky na zalozenie novych workerov pre postmastra
+// requests for spwawning new workers for postmaster
 SharedList * prlJobsList;
 SharedList * workersToCancel;
 
-// zoznam workerov ktorych ma k dispozicii tento backend
+// list of workers currently in use by this master process
 SharedList * workersList = NULL;
 
 NON_EXEC_STATIC PRL_SEM_HDR *PrlSemGlobal = NULL;
 
 NON_EXEC_STATIC slock_t *PrlSemLock = NULL;
 
-//static long int addDuration = 0;
-//static long int getDuration = 0;
-
 /**
- * Inicializacia volana v postmastri este pred vytvorenim akehokolvek backendu
+ * Initialization called in postmaster before spawning any backends.
  */
 void parallel_init(void) {
 	MemoryContext oldContext;
@@ -75,13 +72,10 @@ SharedList * createShList(void) {
 }
 
 void shListAppend(SharedList * list, void * object) {
-//	MemoryContext oldContext;
-//	oldContext = MemoryContextSwitchTo(ShmParallelContext);
 	HOLD_INTERRUPTS();
 	SpinLockAcquire(&list->mutex);
 	list->list = lappend(list->list, object);
 	SpinLockRelease(&list->mutex);
-//	MemoryContextSwitchTo(oldContext);
 	RESUME_INTERRUPTS();
 }
 
@@ -113,7 +107,7 @@ BufferQueue * createBufferQueue(int buffer_size) {
 	int i;
 	volatile PRL_SEM_HDR * prlSemGlobal = PrlSemGlobal;
 
-	ereport(DEBUG1,(errmsg("Parallel.c - create buffer queue - start")));
+	ereport(DEBUG_PRL2,(errmsg("Parallel.c - create buffer queue - start")));
 	bq = (BufferQueue *)palloc(sizeof(BufferQueue));
 	bq->init_size = buffer_size;
 	bq->size = 0;
@@ -130,7 +124,7 @@ BufferQueue * createBufferQueue(int buffer_size) {
 						errmsg("sorry, too many semaphores used already in parallel execution")));
 		SpinLockRelease(PrlSemLock);
 	}
-	ereport(DEBUG1,(errmsg("Parallel.c - create buffer queue - spaces created")));
+	ereport(DEBUG_PRL2,(errmsg("Parallel.c - create buffer queue - spaces created")));
 
 	
 	if (prlSemGlobal->freeSems != NULL) {
@@ -142,7 +136,7 @@ BufferQueue * createBufferQueue(int buffer_size) {
 						errmsg("sorry, too many semaphores used already in parallel execution")));
 		SpinLockRelease(PrlSemLock);
 	}
-	ereport(DEBUG1,(errmsg("Parallel.c - create buffer queue - items created")));
+	ereport(DEBUG_PRL2,(errmsg("Parallel.c - create buffer queue - items created")));
 
 	if (prlSemGlobal->freeSems != NULL) {
 		bq->mutex = prlSemGlobal->freeSems;
@@ -153,7 +147,7 @@ BufferQueue * createBufferQueue(int buffer_size) {
 						errmsg("sorry, too many semaphores used already in parallel execution")));
 		SpinLockRelease(PrlSemLock);
 	}
-	ereport(DEBUG1,(errmsg("Parallel.c - create buffer queue - mutex created to one")));
+	ereport(DEBUG_PRL2,(errmsg("Parallel.c - create buffer queue - mutex created to one")));
 
 	SpinLockRelease(PrlSemLock);
 
@@ -161,25 +155,25 @@ BufferQueue * createBufferQueue(int buffer_size) {
 	for (i = 0; i < buffer_size-1; ++i) {
 		PGSemaphoreUnlock(&(bq->spaces->sem));
 	}
-	ereport(DEBUG1,(errmsg("Parallel.c - create buffer queue - spaces upped to buffer_size")));
+	ereport(DEBUG_PRL2,(errmsg("Parallel.c - create buffer queue - spaces upped to buffer_size")));
 	// created to ONE
 
 
 	// clear to ZERO
 	PGSemaphoreLock(&(bq->items->sem), true);
-	ereport(DEBUG1,(errmsg("Parallel.c - create buffer queue - items downed to zero")));
+	ereport(DEBUG_PRL2,(errmsg("Parallel.c - create buffer queue - items downed to zero")));
 	// created to ONE - that is OK
 
 	bq->head = NULL;
 	bq->tail = NULL;
 	
-	ereport(DEBUG1,(errmsg("Parallel.c - create buffer queue - end")));
+	ereport(DEBUG_PRL2,(errmsg("Parallel.c - create buffer queue - end")));
 	return bq;
 }
 
 void destroyBufferQueue(BufferQueue * bq) {
 	volatile PRL_SEM_HDR * prlSemGlobal = PrlSemGlobal;
-	ereport(DEBUG1,(errmsg("Parallel.c - destroy buffer queue")));
+	ereport(DEBUG_PRL2,(errmsg("Parallel.c - destroy buffer queue")));
 
 	// reset to 0 and unlock to 1 so it is the same as created which inits to one
 	PGSemaphoreReset(&(bq->items->sem));
@@ -214,29 +208,19 @@ void destroyBufferQueue(BufferQueue * bq) {
 }
 
 bool bufferQueueAdd(BufferQueue * bq, BufferQueueCell * cell, bool stopOnLast) {
-//	struct timeval tv;
 	bool result;
-//	long int duration_u = tv.tv_usec;
-//	long int duration_s = tv.tv_sec;
-//	gettimeofday(&tv, NULL);
-//	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue add - start")));
 	PGSemaphoreLock(&(bq->spaces->sem), true);
-//	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue - spaces downed")));
 	PGSemaphoreLock(&(bq->mutex->sem), true);
 	bq->size++;
-//	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue - mutex locked")));
 	if (bq->tail == NULL) {
-//		ereport(DEBUG1,(errmsg("Parallel.c - buffer queue add - was empty")));
 		bq->head = cell;
 		bq->tail = cell;
 		cell->next = NULL;
 	} else if (bq->head == bq->tail) {
-//		ereport(DEBUG1,(errmsg("Parallel.c - buffer queue add - had just one")));
 		bq->tail = cell;
 		bq->head->next = bq->tail;
 		bq->tail->next = NULL;
 	} else {
-//		ereport(DEBUG1,(errmsg("Parallel.c - buffer queue add - was not empty")));
 		(bq->tail)->next = cell;
 		bq->tail = cell;
 		cell->next = NULL;
@@ -246,35 +230,12 @@ bool bufferQueueAdd(BufferQueue * bq, BufferQueueCell * cell, bool stopOnLast) {
 	}
 	result = bq->stop;
 	PGSemaphoreUnlock(&(bq->mutex->sem));
-//	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue add - mutex unlocked")));
 	PGSemaphoreUnlock(&(bq->items->sem));
-//	gettimeofday(&tv, NULL);
-//	duration_s = tv.tv_sec - duration_s;
-//	duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
-//	addDuration += duration_u;
 	return result;
-//	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue add - items upped and end")));
 }
 
-//void printAddUsage(void) {
-//	ereport(LOG,(errmsg("Parallel.c - buffer queue ADD usage %ld", addDuration) ));
-//	addDuration = 0;
-//}
-//
-//void printGetUsage(void) {
-//	ereport(LOG,(errmsg("Parallel.c - buffer queue GET usage %ld", getDuration) ));
-//	getDuration = 0;
-//}
-
 BufferQueueCell * bufferQueueGet(BufferQueue * bq, bool wait) {
-//	struct timeval tv;
-//	long int duration_u = 0;
-//	long int duration_s = 0;
 	BufferQueueCell * result= NULL;
-	
-//	gettimeofday(&tv, NULL);
-//	duration_u = tv.tv_usec;
-//	duration_s = tv.tv_sec;
 	
 	if (!wait) {
 		PGSemaphoreLock(&(bq->mutex->sem), true);
@@ -284,40 +245,21 @@ BufferQueueCell * bufferQueueGet(BufferQueue * bq, bool wait) {
 		}
 		PGSemaphoreUnlock(&(bq->mutex->sem));
 	}
-//	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - start")));
 	PGSemaphoreLock(&(bq->items->sem), true);
-//	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - items downed")));
 	PGSemaphoreLock(&(bq->mutex->sem), true);
-//	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - mutex locked")));
 
 	if (bq->head == NULL) {
-		// toto by sa ale nemalo stat kedze nas sem pustil semafor!
-//		ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - getting from empty - something is wrong")));
-//		gettimeofday(&tv, NULL);
-//		duration_s = tv.tv_sec - duration_s;
-//		duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
-//		addDuration += duration_u;
 		return result;
 	}
 
 	result = bq->head;
 	bq->head = result->next;
 	if (result->next == NULL) {
-//		ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - getting last one")));
 		bq->tail = NULL;
-	} else {
-//		ereport(DEBUG1, (errmsg("Parallel.c - buffer queue get")));
 	}
 	bq->size--;
-	ereport(DEBUG_PRL1, (errmsg("Parallel.c - buffer queue get %d", bq->size)));
 	PGSemaphoreUnlock(&(bq->mutex->sem));
-//	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - mutex unlocked")));
 	PGSemaphoreUnlock(&(bq->spaces->sem));
-//	ereport(DEBUG1,(errmsg("Parallel.c - buffer queue get - spaces upped and end")));
-//	gettimeofday(&tv, NULL);
-//	duration_s = tv.tv_sec - duration_s;
-//	duration_u = duration_s * 1000000 + tv.tv_usec - duration_u;
-//	getDuration += duration_u;
 	return result;
 }
 
@@ -409,7 +351,7 @@ bool waitForAllWorkers(PRL_WORKER_STATE state) {
 	ListCell * lc;
 	Worker * worker;
 	bool notEnd = true;
-	ereport(LOG,(errmsg("Master: wait for all- start")));
+	ereport(DEBUG_PRL1,(errmsg("Master: wait for all- start")));
 	while (notEnd) {
 		notEnd = false;
 		SpinLockAcquire(&workersList->mutex);
@@ -424,19 +366,18 @@ bool waitForAllWorkers(PRL_WORKER_STATE state) {
 		}
 		SpinLockRelease(&workersList->mutex);
 	}
-	ereport(LOG,(errmsg("Master: wait for all- end")));
+	ereport(DEBUG_PRL1,(errmsg("Master: wait for all- end")));
 	return true;
 }
 
 void cancelWorkers(void) {
 	ListCell * lc;
 	Worker * worker;
-	ereport(LOG,(errmsg("Master: cancel workers")));
+	ereport(DEBUG_PRL1,(errmsg("Master: cancel workers")));
 
 	foreach(lc, workersList->list) {
 		worker = (Worker *) lfirst(lc);
-		//signal_child(&worker->workerPid, SIGINT);
-		ereport(LOG,(errmsg("Master: canceling pid ")));
+		ereport(DEBUG_PRL1,(errmsg("Master: canceling pid ")));
 		shListAppendInt(workersToCancel, worker->workerPid);
 	}
 	
@@ -547,7 +488,7 @@ void cleanup(void) {
 	foreach(lc, workersList->list) {
 		worker = (Worker *) lfirst(lc);
 		SpinLockAcquire(&worker->mutex);
-		ereport(LOG,(errmsg("nodeSort - performing one bufferqueue cleaning")));
+		ereport(DEBUG_PRL1,(errmsg("nodeSort - performing one bufferqueue cleaning")));
 		bqc = bufferQueueGetNoSem(worker->work->workParams->bufferQueue);
 		while (bqc != NULL) {
 			if (bqc->last) {
@@ -562,8 +503,6 @@ void cleanup(void) {
 		destroyBufferQueue(worker->work->workParams->bufferQueue);
 		// remove from postmaster work list
 		shListRemove(prlJobsList, worker->work);
-		// this is not necessary as we clear it in postmaster
-		//shListRemove(workersToCancel, worker);
 		// remove from my list 
 		shListRemove(workersList, worker);
 		SpinLockRelease(&worker->mutex);
